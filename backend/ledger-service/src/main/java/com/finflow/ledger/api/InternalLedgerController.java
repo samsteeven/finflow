@@ -35,7 +35,7 @@ class InternalLedgerController {
     }
 
     @PostMapping("/transfers")
-    @PreAuthorize("hasAnyRole('TENANT_ADMIN', 'TENANT_MEMBER')")
+    @PreAuthorize("hasAnyRole('TENANT_ADMIN', 'TENANT_MEMBER', 'SERVICE')")
     ResponseEntity<LedgerController.TransactionResponse> transfer(@Valid @RequestBody TransferRequest request) {
         LedgerService.Result result = service.transfer(request.paymentId(), request.sourceAccountId(),
                 request.destinationAccountId(), request.amountCents(), request.description());
@@ -43,7 +43,7 @@ class InternalLedgerController {
     }
 
     @PostMapping("/reversals")
-    @PreAuthorize("hasAnyRole('TENANT_ADMIN', 'TENANT_MEMBER')")
+    @PreAuthorize("hasAnyRole('TENANT_ADMIN', 'TENANT_MEMBER', 'SERVICE')")
     ResponseEntity<LedgerController.TransactionResponse> reverse(@Valid @RequestBody ReversalRequest request) {
         LedgerService.Result result = service.reverse(request.refundId(), request.transactionId(),
                 request.description());

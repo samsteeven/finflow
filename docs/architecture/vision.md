@@ -145,7 +145,7 @@ Le blueprint prévoit 16 semaines pour huit services. Avec le noyau, la feuille 
 | 1 | **Fondations** : ADR, monorepo Maven, Docker Compose, Keycloak, Gateway, CI, contexte tenant et RLS, tenant-service |
 | 2 | **Account et Payment** : comptes et limites, event sourcing du paiement, machine à états, `Idempotency-Key`, API REST |
 | 3 | **Ledger** : partie double contrôlée en base (journal immuable = journal d'événements, soldes tenus par déclencheur), dépôts simulés, contrepassations, saga synchrone de Payment (comptabilisation, reprises, remboursements), concurrence ([ADR-011](adr/0011-grand-livre-en-partie-double.md), [ADR-012](adr/0012-comptabilisation-par-payment.md)) |
-| 4 | **Kafka** : contrats Avro et Schema Registry, outbox, consommateurs idempotents, saga orchestrée, reprises et DLQ |
+| 4 | **Kafka** : outbox transactionnelle de Payment et du Ledger, relais, contrats Avro et Schema Registry, consommateurs idempotents avec version d'agrégat et file morte (projections d'Account), reprise automatique de la saga par un compte de service ([ADR-013](adr/0013-outbox-kafka-et-avro.md), [ADR-014](adr/0014-consommateurs-idempotents.md), [ADR-015](adr/0015-reprise-automatique-de-la-saga.md)) |
 | 5 | **Front Angular** : Material, SignalStore, connexion OIDC, comptes, paiements, journal ; Playwright ; démonstrations panne, isolation, traçabilité |
 | 6 | **Production** : OpenTelemetry, Prometheus, Grafana, Resilience4j, Toxiproxy, k6 |
 | 7 | **AWS** : images Docker, Terraform (ECS Fargate, RDS, MSK ou alternative moins chère), déploiement sur accord explicite |

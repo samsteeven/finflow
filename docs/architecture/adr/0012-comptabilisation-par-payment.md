@@ -17,12 +17,12 @@ Kafka et l'outbox arrivent à l'incrément 4.
   - `COMPLETED` (avec l'identifiant de la transaction comptable) si le Ledger a comptabilisé ;
   - `REJECTED` (règle `FONDS_INSUFFISANTS`, depuis `PROCESSING`) si le Ledger refuse pour des raisons métier ;
   - `FAILED` en cas de panne, de délai dépassé ou d'erreur serveur. L'issue est alors inconnue, car le Ledger a peut-être comptabilisé.
-- **Reprise** : un paiement `FAILED` est repris (`PaymentRetried`, au plus 3 fois) lors d'un rejeu de la même `Idempotency-Key`. La reprise renvoie la **même clé comptable** : si la première écriture avait réussi, le Ledger renvoie la transaction existante et rien n'est comptabilisé deux fois. La saga reprendra automatiquement à l'incrément 4.
+- **Reprise** : un paiement `FAILED` est repris (`PaymentRetried`, au plus 3 fois) lors d'un rejeu de la même `Idempotency-Key`. La reprise renvoie la **même clé comptable** : si la première écriture avait réussi, le Ledger renvoie la transaction existante et rien n'est comptabilisé deux fois. Depuis l'incrément 4, un worker reprend aussi les paiements en suspens sans attendre un rejeu ([ADR-015](0015-reprise-automatique-de-la-saga.md)).
 - **Remboursement** : `POST /api/v1/payments/{id}/refunds` fait passer le paiement en `REFUND_PENDING`, puis demande au Ledger une contrepassation (`refund:<id>`). Selon la réponse :
   - `REFUNDED` si la contrepassation est faite ;
   - retour à `COMPLETED` (`RefundRejected`) si le destinataire n'a plus les fonds ;
   - maintien en `REFUND_PENDING` en cas de panne, et un nouvel appel reprend avec la même clé.
-- Les opérations d'écriture du Ledger sont sous `/internal/v1/…` et **la Gateway ne les route pas** : depuis l'extérieur, on ne peut ni transférer ni contrepasser sans passer par les contrôles de Payment. Elles valident quand même le jeton relayé et le tenant. Elles exigeront un jeton de service (`client_credentials`) quand la saga tournera en tâche de fond.
+- Les opérations d'écriture du Ledger sont sous `/internal/v1/…` et **la Gateway ne les route pas** : depuis l'extérieur, on ne peut ni transférer ni contrepasser sans passer par les contrôles de Payment. Elles valident quand même le jeton relayé et le tenant. Elles acceptent aussi un jeton de service (`client_credentials`) pour la reprise de la saga en tâche de fond ([ADR-015](0015-reprise-automatique-de-la-saga.md)).
 - Les dépôts simulés (alimentation d'un compte depuis le compte de compensation) sont publics pour un `tenant-admin` : ils remplacent le prestataire externe simulé du blueprint.
 - Les appels réseau restent **hors transaction**. Chaque décision s'écrit dans une transaction courte, avec un contrôle de version (ADR-008).
 

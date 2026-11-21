@@ -27,7 +27,9 @@ final class FakeLedgerService {
 
     private final Map<String, UUID> posted = new ConcurrentHashMap<>();
     private final List<String> receivedTokens = new CopyOnWriteArrayList<>();
+    private final List<String> receivedTenants = new CopyOnWriteArrayList<>();
     private final AtomicInteger calls = new AtomicInteger();
+    private final Map<String, AtomicInteger> callsByKey = new ConcurrentHashMap<>();
     private volatile boolean down;
     private volatile boolean insufficientFunds;
     private volatile boolean reversalRefused;
@@ -92,11 +94,43 @@ final class FakeLedgerService {
         return receivedTokens;
     }
 
+    /** Organisations désignées par l'en-tête {@code X-Tenant-Id}, posé seulement par les reprises. */
+    List<String> receivedTenants() {
+        return receivedTenants;
+    }
+
+    /** Appels reçus pour une opération précise, par exemple {@code paymentId:<id>}. */
+    int callsFor(String operation) {
+        AtomicInteger count = callsByKey.get(operation);
+        return count == null ? 0 : count.get();
+    }
+
+    boolean posted(String operation) {
+        return posted.containsKey(operation);
+    }
+
+    void clearRecordedCalls() {
+        callsByKey.clear();
+        posted.clear();
+        receivedTokens.clear();
+        receivedTenants.clear();
+        calls.set(0);
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         calls.incrementAndGet();
         String auth = exchange.getRequestHeaders().getFirst("Authorization");
         receivedTokens.add(auth == null ? "" : auth.replaceFirst("^Bearer ", ""));
+        String tenantHeader = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+        if (tenantHeader != null) {
+            receivedTenants.add(tenantHeader);
+        }
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        Matcher found = ID.matcher(body);
+        if (found.find()) {
+            callsByKey.computeIfAbsent(found.group(1) + ":" + found.group(2), k -> new AtomicInteger())
+                    .incrementAndGet();
+        }
         if (down) {
             respond(exchange, 503, "{}");
             return;

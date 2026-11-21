@@ -38,6 +38,23 @@ finflow:
     connect-timeout: 1s
     read-timeout: 3s
 
+  # Compte technique de Payment pour reprendre une saga hors d'une requête (ADR-015).
+  service-account:
+    token-uri: ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/finflow/protocol/openid-connect/token}
+    client-id: payment-service
+    client-secret: ${PAYMENT_CLIENT_SECRET:payment-service-dev-secret}
+  saga:
+    recovery:
+      enabled: ${SAGA_RECOVERY_ENABLED:false}
+      interval: 2s
+      base-delay: 5s
+      batch-size: 20
+  messaging:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    schema-registry-url: ${SCHEMA_REGISTRY_URL:http://localhost:8085}
+    relay:
+      enabled: ${MESSAGING_ENABLED:false}
+
 server:
   port: ${PORT:8083}
 

@@ -1,0 +1,16 @@
+{
+  "type": "record", "name": "TransactionPosted", "namespace": "com.finflow.events",
+  "doc": "Une transaction équilibrée est inscrite au grand livre.",
+  "fields": [
+    {"name": "transactionId", "type": "string"},
+    {"name": "kind", "type": "string"},
+    {"name": "reversalOf", "type": ["null", "string"], "default": null},
+    {"name": "lines", "type": {"type": "array", "items": {
+      "type": "record", "name": "PostedLine", "namespace": "com.finflow.events",
+      "fields": [
+        {"name": "accountId", "type": "string"},
+        {"name": "side", "type": "Side"},
+        {"name": "amountCents", "type": "long"}
+      ]}}}
+  ]
+}

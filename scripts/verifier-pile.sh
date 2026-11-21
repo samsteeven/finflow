@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vérifie la pile locale de bout en bout : vrais jetons Keycloak → Gateway → tenant-service → RLS.
-# Prérequis : docker compose up -d, puis tenant-service (profil demo) sur 8081, account-service,
-# payment-service, ledger-service (8082 à 8084) et la Gateway sur 8080 (voir README). Dépend de curl et jq.
+# Prérequis : docker compose --profile kafka up -d, puis tenant-service (profil demo) sur 8081, account-service,
+# payment-service, ledger-service (8082 à 8084) et la Gateway sur 8080, services lancés avec MESSAGING_ENABLED=true (voir README). Dépend de curl et jq.
 set -euo pipefail
 
 KEYCLOAK="${KEYCLOAK_URL:-http://localhost:8180}"
@@ -129,6 +129,34 @@ verifier "solde destinataire rétabli" "0" "$(solde "$alice" "$compte_b")"
 verifier "second remboursement refusé" 409 \
   "$(statut -X POST -H "Authorization: Bearer $alice" -H 'Content-Type: application/json' -d '{}' \
       "$GATEWAY/api/v1/payments/$id2/refunds")"
+
+echo "Kafka, projections et compte de service"
+REGISTRY="${SCHEMA_REGISTRY_URL:-http://localhost:8085}"
+LEDGER_DIRECT="${LEDGER_URL:-http://localhost:8084}"
+attendre() { # description, valeur attendue, commande qui produit la valeur ; réessaie jusqu'à 60 s
+  local obtenu="" essai
+  for essai in $(seq 1 30); do
+    obtenu=$(eval "$3" 2>/dev/null || true)
+    [[ "$obtenu" == "$2" ]] && break
+    sleep 2
+  done
+  verifier "$1" "$2" "$obtenu"
+}
+activite() { # jeton, compte -> champ
+  curl -sf -H "Authorization: Bearer $1" "$GATEWAY/api/v1/accounts/$2/activity"
+}
+verifier "sujet Avro des paiements" "payment.events-value"   "$(curl -sf "$REGISTRY/subjects" | jq -r '.[] | select(. == "payment.events-value")')"
+verifier "sujet Avro du grand livre" "ledger.events-value"   "$(curl -sf "$REGISTRY/subjects" | jq -r '.[] | select(. == "ledger.events-value")')"
+attendre "solde projeté du compte A rejoint le Ledger" "$(solde "$alice" "$compte_a")"   'activite "$alice" "$compte_a" | jq -r .projectedBalanceCents'
+attendre "solde projeté du compte B rejoint le Ledger" "$(solde "$alice" "$compte_b")"   'activite "$alice" "$compte_b" | jq -r .projectedBalanceCents'
+attendre "paiement remboursé visible dans l'activité" "REFUNDED"   'activite "$alice" "$compte_a" | jq -r --arg id "$id2" "[.payments[] | select(.paymentId == \$id)][0].status"'
+verifier "bruno ne lit pas l'activité d'Alpha" 404   "$(statut -H "Authorization: Bearer $bruno" "$GATEWAY/api/v1/accounts/$compte_a/activity")"
+
+service=$(curl -sf "$KEYCLOAK/realms/finflow/protocol/openid-connect/token"   -d grant_type=client_credentials -d client_id=payment-service -d client_secret=payment-service-dev-secret   | jq -r .access_token)
+verifier "rôle service du compte technique" "true" "$(claims "$service" | jq '.realm_access.roles | index("service") != null')"
+verifier "le compte technique n'a pas d'organisation" "null" "$(claims "$service" | jq -r '.tenant_id // "null"')"
+verifier "compte technique sans en-tête d'organisation" 400   "$(statut -X POST -H "Authorization: Bearer $service" -H 'Content-Type: application/json' -d '{}'       "$LEDGER_DIRECT/internal/v1/ledger/transfers")"
+verifier "compte technique refusé sur l'API publique" 403   "$(statut -H "Authorization: Bearer $service" -H "X-Tenant-Id: $ALPHA"       "$LEDGER_DIRECT/api/v1/ledger/accounts/$compte_a/balance")"
 
 if (( echecs > 0 )); then
   echo "$echecs vérification(s) en échec"

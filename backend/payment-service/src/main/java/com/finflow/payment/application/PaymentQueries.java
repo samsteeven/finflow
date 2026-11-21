@@ -20,4 +20,14 @@ public interface PaymentQueries {
     List<PaymentSummary> list(PaymentStatus status, int page, int size);
 
     long count(PaymentStatus status);
+
+    /** Un paiement dont la saga attend une reprise, avec son organisation. */
+    record Due(UUID paymentId, UUID tenantId) {
+    }
+
+    /**
+     * Paiements de toutes les organisations dont la saga est restée en suspens plus longtemps que
+     * le délai (doublé à chaque reprise). Ne renvoie que des identifiants (ADR-015).
+     */
+    List<Due> dueForRecovery(int baseDelaySeconds, int maxRetries, int limit);
 }

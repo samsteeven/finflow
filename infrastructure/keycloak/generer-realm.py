@@ -78,6 +78,7 @@ realm = {
         {"name": "platform-admin", "description": "Administre la plateforme : crée les organisations"},
         {"name": "tenant-admin", "description": "Administre son organisation"},
         {"name": "tenant-member", "description": "Membre d'une organisation"},
+        {"name": "service", "description": "Compte technique d'un service (reprise des sagas, ADR-015)"},
     ]},
     "clients": [
         {
@@ -98,8 +99,20 @@ realm = {
             "implicitFlowEnabled": False, "directAccessGrantsEnabled": True,
             "protocolMappers": mappers(),
         },
+        {
+            # Compte technique de Payment : jeton par client credentials, sans organisation. Il ne
+            # sert qu'à reprendre une saga hors d'une requête utilisateur (ADR-015). Le secret
+            # ci-dessous est un secret de développement ; en production il vient d'un coffre.
+            "clientId": "payment-service", "name": "FinFlow (payment-service)", "enabled": True,
+            "publicClient": False, "secret": "payment-service-dev-secret", "protocol": "openid-connect",
+            "standardFlowEnabled": False, "implicitFlowEnabled": False, "directAccessGrantsEnabled": False,
+            "serviceAccountsEnabled": True,
+            "protocolMappers": mappers(),
+        },
     ],
     "users": [
+        {"username": "service-account-payment-service", "enabled": True,
+         "serviceAccountClientId": "payment-service", "realmRoles": ["service"]},
         user("plateforme", "Paula", "Plateforme", ["platform-admin"]),
         user("alice", "Alice", "Alpha", ["tenant-admin"], ALPHA),
         user("bruno", "Bruno", "Beta", ["tenant-admin"], BETA),

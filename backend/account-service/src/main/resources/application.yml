@@ -32,6 +32,13 @@ spring:
           jwk-set-uri: ${KEYCLOAK_JWKS:${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/certs}
           audiences: finflow-api
 
+finflow:
+  messaging:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    schema-registry-url: ${SCHEMA_REGISTRY_URL:http://localhost:8085}
+    consumer:
+      enabled: ${MESSAGING_ENABLED:false}
+
 server:
   port: ${PORT:8082}
 

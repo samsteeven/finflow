@@ -34,6 +34,12 @@ finflow:
     connect-timeout: 1s
     read-timeout: 2s
 
+  messaging:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    schema-registry-url: ${SCHEMA_REGISTRY_URL:http://localhost:8085}
+    relay:
+      enabled: ${MESSAGING_ENABLED:false}
+
 server:
   port: ${PORT:8084}
 

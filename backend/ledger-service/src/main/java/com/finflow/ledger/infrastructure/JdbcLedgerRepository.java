@@ -8,7 +8,12 @@ import com.finflow.ledger.domain.Kind;
 import com.finflow.ledger.domain.Line;
 import com.finflow.ledger.domain.Posting;
 import com.finflow.ledger.domain.Side;
+import com.finflow.events.PostedLine;
+import com.finflow.events.TransactionPosted;
+import com.finflow.messaging.Envelopes;
+import com.finflow.messaging.Outbox;
 import com.finflow.security.TenantContext;
+import java.time.Clock;
 import java.sql.Timestamp;
 import java.util.Collection;
 import java.util.List;
@@ -26,10 +31,16 @@ class JdbcLedgerRepository implements LedgerRepository {
 
     private static final String CURRENCY = "EUR";
 
-    private final JdbcClient jdbc;
+    static final String TOPIC = "ledger.events";
 
-    JdbcLedgerRepository(JdbcClient jdbc) {
+    private final JdbcClient jdbc;
+    private final Outbox outbox;
+    private final Clock clock;
+
+    JdbcLedgerRepository(JdbcClient jdbc, Outbox outbox, Clock clock) {
         this.jdbc = jdbc;
+        this.outbox = outbox;
+        this.clock = clock;
     }
 
     @Override
@@ -145,6 +156,19 @@ class JdbcLedgerRepository implements LedgerRepository {
                     .param("currency", CURRENCY)
                     .update();
         }
+        // Dans la même transaction que les écritures : publié si et seulement si comptabilisé (ADR-013).
+        TransactionPosted payload = TransactionPosted.newBuilder()
+                .setTransactionId(posting.id().toString())
+                .setKind(posting.kind().name())
+                .setReversalOf(posting.reversalOf() == null ? null : posting.reversalOf().toString())
+                .setLines(posting.lines().stream()
+                        .map(line -> PostedLine.newBuilder().setAccountId(line.accountId().toString())
+                                .setSide(com.finflow.events.Side.valueOf(line.side().name()))
+                                .setAmountCents(line.amountCents()).build())
+                        .toList())
+                .build();
+        outbox.append(TOPIC, Envelopes.of(UUID.randomUUID(), "ledger-service", "TransactionPosted", posting.id(), 1,
+                tenant, null, null, clock.instant(), payload));
     }
 
     @Override

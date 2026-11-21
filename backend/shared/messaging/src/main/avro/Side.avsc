@@ -1,0 +1,1 @@
+{"type": "enum", "name": "Side", "namespace": "com.finflow.events", "symbols": ["DEBIT", "CREDIT"]}

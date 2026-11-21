@@ -1,0 +1,13 @@
+{
+  "type": "record", "name": "PaymentChanged", "namespace": "com.finflow.events",
+  "doc": "État utile d'un paiement après une transition. Les consommateurs s'appuient sur aggregateVersion pour ignorer un événement ancien.",
+  "fields": [
+    {"name": "status", "type": "string"},
+    {"name": "sourceAccountId", "type": "string"},
+    {"name": "destinationAccountId", "type": "string"},
+    {"name": "amountCents", "type": "long"},
+    {"name": "currency", "type": "string"},
+    {"name": "ledgerTransactionId", "type": ["null", "string"], "default": null},
+    {"name": "reason", "type": ["null", "string"], "default": null}
+  ]
+}

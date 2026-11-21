@@ -105,4 +105,20 @@ class JdbcPaymentQueries implements PaymentQueries {
                 .param("status", status == null ? null : status.name())
                 .query(Long.class).single();
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Due> dueForRecovery(int baseDelaySeconds, int maxRetries, int limit) {
+        return jdbc.sql("""
+                        select payment_id, tenant_id from saga_watch
+                         where not (status = 'FAILED' and retries >= :max)
+                           -- Délai exponentiel : chaque reprise attend deux fois plus que la précédente.
+                           and updated_at < now() - make_interval(secs => :delay * power(2, retries))
+                         order by updated_at limit :limit""")
+                .param("delay", baseDelaySeconds)
+                .param("max", maxRetries)
+                .param("limit", limit)
+                .query((rs, i) -> new Due(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class)))
+                .list();
+    }
 }

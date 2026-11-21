@@ -6,6 +6,9 @@ import com.finflow.payment.application.StoredEvent;
 import com.finflow.payment.domain.Payment;
 import com.finflow.payment.domain.PaymentEvent;
 import com.finflow.payment.domain.PaymentState;
+import com.finflow.events.PaymentChanged;
+import com.finflow.messaging.Envelopes;
+import com.finflow.messaging.Outbox;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
@@ -24,13 +27,16 @@ import org.springframework.transaction.annotation.Transactional;
 class JdbcPaymentEventStore implements PaymentEventStore {
 
     static final int SNAPSHOT_EVERY = 5;
+    static final String TOPIC = "payment.events";
 
     private final JdbcClient jdbc;
     private final EventSerializer serializer;
+    private final Outbox outbox;
 
-    JdbcPaymentEventStore(JdbcClient jdbc, EventSerializer serializer) {
+    JdbcPaymentEventStore(JdbcClient jdbc, EventSerializer serializer, Outbox outbox) {
         this.jdbc = jdbc;
         this.serializer = serializer;
+        this.outbox = outbox;
     }
 
     @Override
@@ -41,7 +47,11 @@ class JdbcPaymentEventStore implements PaymentEventStore {
             return;
         }
         int version = payment.expectedVersion();
-        UUID causation = null;
+        // La cause du premier événement d'un lot est le dernier événement déjà écrit : la chaîne de
+        // causalité ne s'interrompt pas d'une transaction à l'autre.
+        UUID causation = version == 0 ? null : jdbc.sql(
+                        "select event_id from payment_events where payment_id = :id and version = :version")
+                .param("id", payment.id()).param("version", version).query(UUID.class).optional().orElse(null);
         try {
             for (PaymentEvent event : events) {
                 version++;
@@ -62,12 +72,14 @@ class JdbcPaymentEventStore implements PaymentEventStore {
                         .param("causationId", causation)
                         .param("occurredAt", Timestamp.from(event.occurredAt()))
                         .update();
+                publish(payment, event, version, eventId, correlationId, causation);
                 causation = eventId;
             }
         } catch (DuplicateKeyException e) {
             throw new ConcurrencyConflictException(payment.id(), payment.expectedVersion());
         }
         project(payment.state());
+        watch(payment.state());
         if (payment.version() / SNAPSHOT_EVERY > payment.expectedVersion() / SNAPSHOT_EVERY) {
             snapshot(payment.state());
         }
@@ -113,6 +125,78 @@ class JdbcPaymentEventStore implements PaymentEventStore {
                         rs.getObject("causation_id", UUID.class),
                         rs.getTimestamp("occurred_at").toInstant()))
                 .list();
+    }
+
+    /**
+     * Écrit l'événement dans l'outbox, dans la même transaction que l'event store (ADR-013). Le
+     * statut publié est celui qui suit l'événement ; le reste décrit le paiement, qui ne change pas.
+     */
+    private void publish(Payment payment, PaymentEvent event, int version, UUID eventId, String correlationId,
+                         UUID causation) {
+        PaymentState state = payment.state();
+        PaymentChanged payload = PaymentChanged.newBuilder()
+                .setStatus(statusAfter(event))
+                .setSourceAccountId(state.sourceAccountId().toString())
+                .setDestinationAccountId(state.destinationAccountId().toString())
+                .setAmountCents(state.amountCents())
+                .setCurrency(state.currency())
+                .setLedgerTransactionId(switch (event) {
+                    case PaymentEvent.PaymentCompleted completed -> completed.ledgerTransactionId().toString();
+                    case PaymentEvent.RefundCompleted completed -> completed.ledgerTransactionId().toString();
+                    default -> null;
+                })
+                .setReason(switch (event) {
+                    case PaymentEvent.PaymentRejected rejected -> rejected.rule();
+                    case PaymentEvent.PaymentFailed failed -> failed.reason();
+                    case PaymentEvent.RefundRequested requested -> requested.reason();
+                    case PaymentEvent.RefundRejected rejected -> rejected.reason();
+                    default -> null;
+                })
+                .build();
+        outbox.append(TOPIC, Envelopes.of(eventId, "payment-service", event.type(), payment.id(), version,
+                payment.tenantId(), correlationId, causation == null ? null : causation.toString(),
+                event.occurredAt(), payload));
+    }
+
+    private static String statusAfter(PaymentEvent event) {
+        return switch (event) {
+            case PaymentEvent.PaymentCreated e -> "CREATED";
+            case PaymentEvent.PaymentValidationStarted e -> "VALIDATING";
+            case PaymentEvent.PaymentValidated e -> "PROCESSING";
+            case PaymentEvent.PaymentRejected e -> "REJECTED";
+            case PaymentEvent.PaymentCompleted e -> "COMPLETED";
+            case PaymentEvent.PaymentFailed e -> "FAILED";
+            case PaymentEvent.PaymentRetried e -> "PROCESSING";
+            case PaymentEvent.RefundRequested e -> "REFUND_PENDING";
+            case PaymentEvent.RefundRejected e -> "COMPLETED";
+            case PaymentEvent.RefundCompleted e -> "REFUNDED";
+        };
+    }
+
+    /**
+     * Tient à jour la liste des sagas en suspens (ADR-015) : un paiement y entre quand il attend
+     * le Ledger, et en sort dès qu'il est terminé.
+     */
+    private void watch(PaymentState s) {
+        boolean pending = s.status() == com.finflow.payment.domain.PaymentStatus.PROCESSING
+                || s.status() == com.finflow.payment.domain.PaymentStatus.FAILED
+                || s.status() == com.finflow.payment.domain.PaymentStatus.REFUND_PENDING;
+        if (!pending) {
+            jdbc.sql("delete from saga_watch where payment_id = :id").param("id", s.id()).update();
+            return;
+        }
+        jdbc.sql("""
+                        insert into saga_watch (payment_id, tenant_id, status, retries, updated_at)
+                        values (:id, :tenantId, :status, :retries, :updatedAt)
+                        on conflict (payment_id) do update
+                           set status = excluded.status, retries = excluded.retries,
+                               updated_at = excluded.updated_at""")
+                .param("id", s.id())
+                .param("tenantId", s.tenantId())
+                .param("status", s.status().name())
+                .param("retries", s.retries())
+                .param("updatedAt", Timestamp.from(s.updatedAt()))
+                .update();
     }
 
     /** La projection n'avance jamais à reculons : une version plus ancienne est ignorée. */

@@ -150,6 +150,23 @@ public class PaymentService {
     }
 
     /**
+     * Reprend la saga d'un paiement resté en suspens, hors de toute requête utilisateur
+     * (ADR-015). Elle s'exécute dans l'organisation du paiement ; le Ledger renvoie la
+     * transaction déjà passée si la précédente tentative avait réussi sans que Payment le sache.
+     */
+    public Payment recover(UUID tenantId, UUID paymentId) {
+        String correlationId = "reprise-" + paymentId;
+        return TenantContext.callAs(TenantId.of(tenantId), () -> {
+            Payment current = get(paymentId);
+            return switch (current.status()) {
+                case PROCESSING, FAILED -> settle(paymentId, correlationId);
+                case REFUND_PENDING -> settleRefund(paymentId, correlationId);
+                default -> current;
+            };
+        });
+    }
+
+    /**
      * Rembourse un paiement comptabilisé par une contrepassation (ADR-012). Un paiement déjà en
      * cours de remboursement est simplement repris, avec la même clé comptable.
      */
@@ -173,7 +190,7 @@ public class PaymentService {
         return settleRefund(paymentId, correlationId);
     }
 
-    private Payment settleRefund(UUID paymentId, String correlationId) {
+    Payment settleRefund(UUID paymentId, String correlationId) {
         Payment current = get(paymentId);
         if (current.status() != PaymentStatus.REFUND_PENDING) {
             return current;

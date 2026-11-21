@@ -7,7 +7,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
-/** Vrai PostgreSQL (rôle applicatif), faux Keycloak et faux account-service. */
+/** Vrai PostgreSQL (rôle applicatif), faux Keycloak, faux account-service et faux Ledger. */
+@org.springframework.context.annotation.Import(TestServiceToken.class)
 public abstract class PaymentIntegrationTest {
 
     static final ServiceDatabase DATABASE = ServiceDatabase.of("payment");

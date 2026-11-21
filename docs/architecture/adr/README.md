@@ -14,3 +14,6 @@
 | [010](0010-validation-synchrone-et-limites.md) | Validation par appel synchrone à Account, limites sous verrou consultatif | acceptée |
 | [011](0011-grand-livre-en-partie-double.md) | Grand livre en partie double, garanti par PostgreSQL | acceptée |
 | [012](0012-comptabilisation-par-payment.md) | Comptabilisation orchestrée par Payment, d'abord en synchrone | acceptée |
+| [013](0013-outbox-kafka-et-avro.md) | Transactional Outbox, relais Kafka et contrats Avro | acceptée |
+| [014](0014-consommateurs-idempotents.md) | Consommateurs idempotents, version d'agrégat et file morte | acceptée |
+| [015](0015-reprise-automatique-de-la-saga.md) | Reprise automatique de la saga par un compte de service | acceptée |

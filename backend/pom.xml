@@ -21,6 +21,7 @@
   <modules>
     <module>shared/security-starter</module>
     <module>shared/test-support</module>
+    <module>shared/messaging</module>
     <module>tenant-service</module>
     <module>account-service</module>
     <module>payment-service</module>
@@ -46,6 +47,11 @@
       <dependency>
         <groupId>com.finflow</groupId>
         <artifactId>security-starter</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.finflow</groupId>
+        <artifactId>messaging</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

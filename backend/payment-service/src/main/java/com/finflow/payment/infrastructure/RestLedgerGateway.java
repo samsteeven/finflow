@@ -1,6 +1,8 @@
 package com.finflow.payment.infrastructure;
 
 import com.finflow.payment.application.LedgerGateway;
+import com.finflow.payment.application.ServiceTokenProvider;
+import com.finflow.security.TenantContext;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Map;
@@ -24,14 +26,16 @@ import org.springframework.web.client.RestClientException;
 class RestLedgerGateway implements LedgerGateway {
 
     private final RestClient client;
+    private final ServiceTokenProvider serviceTokens;
 
-    RestLedgerGateway(RestClient.Builder builder,
+    RestLedgerGateway(RestClient.Builder builder, ServiceTokenProvider serviceTokens,
                       @Value("${finflow.ledger.base-url:http://localhost:8084}") String baseUrl,
                       @Value("${finflow.ledger.connect-timeout:1s}") Duration connectTimeout,
                       @Value("${finflow.ledger.read-timeout:3s}") Duration readTimeout) {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder().connectTimeout(connectTimeout).build());
         factory.setReadTimeout(readTimeout);
+        this.serviceTokens = serviceTokens;
         this.client = builder.baseUrl(baseUrl).requestFactory(factory).build();
     }
 
@@ -58,7 +62,7 @@ class RestLedgerGateway implements LedgerGateway {
     private Outcome post(String path, Map<String, Object> body) {
         try {
             return client.post().uri(path)
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + callerToken())
+                    .headers(this::authenticate)
                     .body(body)
                     .exchange((request, response) -> {
                         int status = response.getStatusCode().value();
@@ -78,6 +82,23 @@ class RestLedgerGateway implements LedgerGateway {
                     });
         } catch (RestClientException e) {
             return new Outcome.Unavailable("Ledger injoignable : " + e.getMessage());
+        } catch (IllegalStateException e) {
+            // Pas de jeton de service : comme une panne, on réessaiera avec la même clé.
+            return new Outcome.Unavailable(e.getMessage());
+        }
+    }
+
+    /**
+     * Dans une requête utilisateur, on relaie son jeton. Hors requête (reprise d'une saga), on
+     * s'authentifie avec le compte technique et on désigne l'organisation du paiement (ADR-015).
+     */
+    private void authenticate(HttpHeaders headers) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication instanceof JwtAuthenticationToken jwt) {
+            headers.setBearerAuth(jwt.getToken().getTokenValue());
+        } else {
+            headers.setBearerAuth(serviceTokens.token());
+            headers.set("X-Tenant-Id", TenantContext.require().toString());
         }
     }
 
@@ -94,13 +115,5 @@ class RestLedgerGateway implements LedgerGateway {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private static String callerToken() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication instanceof JwtAuthenticationToken jwt) {
-            return jwt.getToken().getTokenValue();
-        }
-        throw new IllegalStateException("Aucun jeton à relayer : l'appel doit venir d'une requête authentifiée");
     }
 }

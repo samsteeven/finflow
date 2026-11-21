@@ -38,7 +38,7 @@ jobs:
           retention-days: 7
 
   pile:
-    name: Pile locale (Keycloak, Gateway, tenant, account, payment, ledger)
+    name: Pile locale (Keycloak, Kafka, Gateway, tenant, account, payment, ledger)
     needs: backend
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -52,9 +52,13 @@ jobs:
       - name: Construire les jars
         working-directory: backend
         run: ./mvnw -B -ntp package -DskipTests
-      - name: Démarrer PostgreSQL et Keycloak
-        run: docker compose up -d --wait
+      - name: Démarrer PostgreSQL, Keycloak, Kafka et Schema Registry
+        run: docker compose --profile kafka up -d --wait
       - name: Démarrer les services et la Gateway
+        env:
+          # Outbox, consommateurs et reprise automatique des sagas (incrément 4).
+          MESSAGING_ENABLED: "true"
+          SAGA_RECOVERY_ENABLED: "true"
         run: |
           mkdir -p logs
           SPRING_PROFILES_ACTIVE=demo nohup java -Xmx256m -jar backend/tenant-service/target/tenant-service-*.jar > logs/tenant.log 2>&1 &
