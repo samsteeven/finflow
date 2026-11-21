@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: tenant-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${TENANT_DB_URL:jdbc:postgresql://localhost:5439/finflow_tenant}
+    # Rôle applicatif : ni propriétaire, ni BYPASSRLS (ADR-005).
+    username: ${TENANT_DB_APP_USER:finflow_tenant_app}
+    password: ${TENANT_DB_APP_PASSWORD:finflow_tenant_app_dev}
+    hikari:
+      maximum-pool-size: 10
+  flyway:
+    # Les migrations s'exécutent avec le rôle propriétaire.
+    user: ${TENANT_DB_OWNER_USER:finflow_tenant_owner}
+    password: ${TENANT_DB_OWNER_PASSWORD:finflow_tenant_owner_dev}
+    placeholders:
+      app_role: ${spring.datasource.username}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  mvc:
+    problemdetails:
+      enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/finflow}
+          jwk-set-uri: ${KEYCLOAK_JWKS:${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/certs}
+          audiences: finflow-api
+
+server:
+  port: ${PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
