@@ -23,6 +23,14 @@ spring:
               uri: ${TENANT_SERVICE_URL:http://localhost:8081}
               predicates:
                 - Path=/api/v1/tenants,/api/v1/tenants/**
+            - id: account-service
+              uri: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/accounts,/api/v1/accounts/**
+            - id: payment-service
+              uri: ${PAYMENT_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/payments,/api/v1/payments/**
 
 finflow:
   cors:

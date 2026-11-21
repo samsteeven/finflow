@@ -1,1 +1,2 @@
 com.finflow.security.jpa.TenantJpaAutoConfiguration
+com.finflow.security.jdbc.TenantJdbcAutoConfiguration

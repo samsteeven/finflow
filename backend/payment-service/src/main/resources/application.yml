@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: payment-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${PAYMENT_DB_URL:jdbc:postgresql://localhost:5439/finflow_payment}
+    # Rôle applicatif : ni propriétaire, ni BYPASSRLS (ADR-005).
+    username: ${PAYMENT_DB_APP_USER:finflow_payment_app}
+    password: ${PAYMENT_DB_APP_PASSWORD:finflow_payment_app_dev}
+    hikari:
+      maximum-pool-size: 10
+  flyway:
+    # Les migrations s'exécutent avec le rôle propriétaire.
+    user: ${PAYMENT_DB_OWNER_USER:finflow_payment_owner}
+    password: ${PAYMENT_DB_OWNER_PASSWORD:finflow_payment_owner_dev}
+    placeholders:
+      app_role: ${spring.datasource.username}
+  mvc:
+    problemdetails:
+      enabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/finflow}
+          jwk-set-uri: ${KEYCLOAK_JWKS:${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/certs}
+          audiences: finflow-api
+
+finflow:
+  accounts:
+    base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
+    connect-timeout: 1s
+    read-timeout: 2s
+
+server:
+  port: ${PORT:8083}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

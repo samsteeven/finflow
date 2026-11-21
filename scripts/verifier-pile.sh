@@ -61,6 +61,32 @@ verifier "la plateforme crée une organisation" 201 \
       -d "{\"name\":\"Gamma\",\"slug\":\"$slug\",\"plan\":\"SANDBOX\",\"adminUserId\":\"admin-gamma\"}" \
       "$GATEWAY/api/v1/tenants")"
 
+echo "Comptes et paiements"
+ouvrir() { # jeton, nom
+  curl -sf -X POST -H "Authorization: Bearer $1" -H 'Content-Type: application/json' \
+    -d "{\"name\":\"$2\",\"type\":\"CURRENT\",\"perTransactionLimitCents\":200000,\"dailyLimitCents\":500000}" \
+    "$GATEWAY/api/v1/accounts" | jq -r .id
+}
+payer() { # jeton, clé, source, destination, montant
+  curl -s -X POST -H "Authorization: Bearer $1" -H "Idempotency-Key: $2" -H 'Content-Type: application/json' \
+    -d "{\"sourceAccountId\":\"$3\",\"destinationAccountId\":\"$4\",\"amountCents\":$5}" "$GATEWAY/api/v1/payments"
+}
+compte_a=$(ouvrir "$alice" "Compte A")
+compte_b=$(ouvrir "$alice" "Compte B")
+cle="verif-$(date +%s)-$RANDOM"
+paiement=$(payer "$alice" "$cle" "$compte_a" "$compte_b" 150000)
+id=$(jq -r .id <<<"$paiement")
+verifier "transfert de 1 500 € d'Alpha" "PROCESSING" "$(jq -r .status <<<"$paiement")"
+verifier "rejeu de la même Idempotency-Key" "$id" "$(payer "$alice" "$cle" "$compte_a" "$compte_b" 150000 | jq -r .id)"
+verifier "historique du paiement" "PaymentCreated PaymentValidationStarted PaymentValidated" \
+  "$(curl -sf -H "Authorization: Bearer $alice" "$GATEWAY/api/v1/payments/$id/events" | jq -r '[.[].eventType] | join(" ")')"
+verifier "limite par opération" "LIMITE_PAR_OPERATION" \
+  "$(payer "$alice" "verif-$RANDOM-$RANDOM" "$compte_a" "$compte_b" 250000 | jq -r .rejection.rule)"
+verifier "bruno lit le paiement d'Alpha" 404 \
+  "$(statut -H "Authorization: Bearer $bruno" "$GATEWAY/api/v1/payments/$id")"
+verifier "bruno débite un compte d'Alpha" "COMPTE_SOURCE_INTROUVABLE" \
+  "$(payer "$bruno" "verif-$RANDOM-$RANDOM" "$compte_a" "$compte_b" 100 | jq -r .rejection.rule)"
+
 if (( echecs > 0 )); then
   echo "$echecs vérification(s) en échec"
   exit 1

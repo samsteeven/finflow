@@ -9,3 +9,6 @@
 | [005](0005-rls-et-contexte-par-transaction.md) | RLS forcée, contexte tenant posé à chaque transaction | acceptée |
 | [006](0006-pile-locale-sobre-en-memoire.md) | Une pile locale sobre en mémoire | acceptée |
 | [007](0007-front-angular-material-et-e2e-playwright.md) | Front Angular Material et SignalStore, E2E Playwright | acceptée |
+| [008](0008-paiement-event-sourcing.md) | Event sourcing du paiement, en JDBC, avec version optimiste et snapshots | acceptée |
+| [009](0009-idempotency-key.md) | Idempotency-Key sur la création d'un paiement | acceptée |
+| [010](0010-validation-synchrone-et-limites.md) | Validation par appel synchrone à Account, limites sous verrou consultatif | acceptée |

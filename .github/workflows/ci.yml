@@ -38,7 +38,7 @@ jobs:
           retention-days: 7
 
   pile:
-    name: Pile locale (Keycloak, Gateway, tenant-service)
+    name: Pile locale (Keycloak, Gateway, tenant, account, payment)
     needs: backend
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -54,12 +54,14 @@ jobs:
         run: ./mvnw -B -ntp package -DskipTests
       - name: Démarrer PostgreSQL et Keycloak
         run: docker compose up -d --wait
-      - name: Démarrer tenant-service et la Gateway
+      - name: Démarrer les services et la Gateway
         run: |
           mkdir -p logs
           SPRING_PROFILES_ACTIVE=demo nohup java -Xmx256m -jar backend/tenant-service/target/tenant-service-*.jar > logs/tenant.log 2>&1 &
+          nohup java -Xmx256m -jar backend/account-service/target/account-service-*.jar > logs/account.log 2>&1 &
+          nohup java -Xmx256m -jar backend/payment-service/target/payment-service-*.jar > logs/payment.log 2>&1 &
           nohup java -Xmx192m -jar backend/api-gateway/target/api-gateway-*.jar > logs/gateway.log 2>&1 &
-          for port in 8081 8080; do
+          for port in 8081 8082 8083 8080; do
             timeout 90 bash -c "until curl -sf http://localhost:$port/actuator/health > /dev/null; do sleep 2; done"
           done
       - name: Vérifier la pile avec de vrais jetons Keycloak

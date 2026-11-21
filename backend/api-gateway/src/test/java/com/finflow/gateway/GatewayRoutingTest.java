@@ -45,7 +45,10 @@ class GatewayRoutingTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.security.oauth2.resourceserver.jwt.issuer-uri", ISSUER::issuer);
         registry.add("spring.security.oauth2.resourceserver.jwt.jwk-set-uri", ISSUER::jwkSetUri);
-        registry.add("TENANT_SERVICE_URL", () -> "http://localhost:" + DOWNSTREAM.getAddress().getPort());
+        String downstream = "http://localhost:" + DOWNSTREAM.getAddress().getPort();
+        registry.add("TENANT_SERVICE_URL", () -> downstream);
+        registry.add("ACCOUNT_SERVICE_URL", () -> downstream);
+        registry.add("PAYMENT_SERVICE_URL", () -> downstream);
     }
 
     @BeforeEach
@@ -90,6 +93,22 @@ class GatewayRoutingTest {
 
         assertThat(CALLS).hasValue(1);
         assertThat(header("Authorization")).isEqualTo("Bearer " + token);
+    }
+
+    @Test
+    void comptes_et_paiements_sont_routes_avec_la_cle_d_idempotence() {
+        String token = ISSUER.token().tenant(UUID.randomUUID()).build();
+
+        client.get().uri("/api/v1/accounts?page=0").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.path").isEqualTo("/api/v1/accounts");
+        client.post().uri("/api/v1/payments").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .header("Idempotency-Key", "cle-de-test-123")
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.path").isEqualTo("/api/v1/payments");
+
+        assertThat(CALLS).hasValue(2);
+        assertThat(header("Idempotency-Key")).isEqualTo("cle-de-test-123");
     }
 
     @Test
