@@ -51,7 +51,7 @@ class PaymentConcurrencyIT extends PaymentIntegrationTest {
         assertThat(responses).filteredOn(r -> r.headers().firstValue("Idempotent-Replayed").orElse("")
                 .equals("false")).hasSize(1);
         assertThat(count("select count(*) from payment_summaries where tenant_id = ?", tenant)).isEqualTo(1);
-        assertThat(count("select count(*) from payment_events where tenant_id = ?", tenant)).isEqualTo(3);
+        assertThat(count("select count(*) from payment_events where tenant_id = ?", tenant)).isEqualTo(4);
         assertThat(count("select count(*) from idempotency_keys where tenant_id = ?", tenant)).isEqualTo(1);
     }
 
@@ -69,7 +69,39 @@ class PaymentConcurrencyIT extends PaymentIntegrationTest {
                     .map(r -> (String) JsonPath.read(r.body(), "$.status"))
                     .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
             assertThat(statuses).as("tour %d", round).containsExactlyInAnyOrderEntriesOf(
-                    Map.of("PROCESSING", 1L, "REJECTED", 1L));
+                    Map.of("COMPLETED", 1L, "REJECTED", 1L));
+        }
+    }
+
+    @Test
+    void des_remboursements_simultanes_ne_contrepassent_qu_une_fois() throws Exception {
+        UUID tenant = UUID.randomUUID();
+        UUID a = ACCOUNTS.add(tenant, "ACTIVE", 100_000, 500_000);
+        UUID b = ACCOUNTS.add(tenant, "ACTIVE", 100_000, 500_000);
+        String member = bearer(tenant, "tenant-member");
+        String admin = bearer(tenant, "tenant-admin");
+        String id = JsonPath.read(post(member, key(), a, b, 3_000).body(), "$.id");
+        int before = LEDGER.postedTransactions();
+
+        List<HttpResponse<String>> responses = concurrently(6, i -> refund(admin, id));
+
+        assertThat(responses).extracting(HttpResponse::statusCode).isSubsetOf(200, 409);
+        assertThat(responses).filteredOn(r -> r.statusCode() == 200).isNotEmpty()
+                .allMatch(r -> JsonPath.<String>read(r.body(), "$.status").matches("REFUND_PENDING|REFUNDED"));
+        assertThat(LEDGER.postedTransactions()).isEqualTo(before + 1);
+        assertThat(refund(admin, id).statusCode()).isEqualTo(409);
+        assertThat(count("select count(*) from payment_events where tenant_id = ? and event_type = 'RefundRequested'",
+                tenant)).isEqualTo(1);
+    }
+
+    private HttpResponse<String> refund(String token, String paymentId) {
+        try {
+            return HTTP.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/payments/"
+                            + paymentId + "/refunds"))
+                    .header("Authorization", token).header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString());
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
     }
 

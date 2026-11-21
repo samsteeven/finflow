@@ -8,6 +8,7 @@ import com.finflow.payment.domain.PaymentEvent.PaymentRetried;
 import com.finflow.payment.domain.PaymentEvent.PaymentValidated;
 import com.finflow.payment.domain.PaymentEvent.PaymentValidationStarted;
 import com.finflow.payment.domain.PaymentEvent.RefundCompleted;
+import com.finflow.payment.domain.PaymentEvent.RefundRejected;
 import com.finflow.payment.domain.PaymentEvent.RefundRequested;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -42,6 +43,8 @@ public final class Payment {
     private int retries;
     private UUID ledgerTransactionId;
     private UUID refundLedgerTransactionId;
+    private UUID refundId;
+    private String refundRejection;
     private Instant createdAt;
     private Instant updatedAt;
     private int version;
@@ -92,8 +95,11 @@ public final class Payment {
         raise(new PaymentValidated(id, now));
     }
 
+    /** Refus métier : à la validation (limites, comptes) ou à la comptabilisation (fonds manquants). */
     public void reject(String rule, String detail, Instant now) {
-        require(PaymentStatus.VALIDATING, "rejeter");
+        if (status != PaymentStatus.VALIDATING && status != PaymentStatus.PROCESSING) {
+            throw new IllegalTransitionException(id, "rejeter", status, null);
+        }
         raise(new PaymentRejected(id, rule, detail, now));
     }
 
@@ -118,12 +124,18 @@ public final class Payment {
 
     public void requestRefund(String reason, Instant now) {
         require(PaymentStatus.COMPLETED, "rembourser");
-        raise(new RefundRequested(id, reason, now));
+        raise(new RefundRequested(id, UUID.randomUUID(), reason, now));
     }
 
     public void completeRefund(UUID ledgerTransactionId, Instant now) {
         require(PaymentStatus.REFUND_PENDING, "terminer le remboursement de");
         raise(new RefundCompleted(id, Objects.requireNonNull(ledgerTransactionId), now));
+    }
+
+    /** Le Ledger refuse la contrepassation : le paiement reste comptabilisé, donc terminé. */
+    public void rejectRefund(String reason, Instant now) {
+        require(PaymentStatus.REFUND_PENDING, "refuser le remboursement de");
+        raise(new RefundRejected(id, reason, now));
     }
 
     private void require(PaymentStatus expected, String action) {
@@ -173,7 +185,15 @@ public final class Payment {
                 status = PaymentStatus.PROCESSING;
                 retries = e.attempt();
             }
-            case RefundRequested e -> status = PaymentStatus.REFUND_PENDING;
+            case RefundRequested e -> {
+                status = PaymentStatus.REFUND_PENDING;
+                refundId = e.refundId();
+            }
+            case RefundRejected e -> {
+                status = PaymentStatus.COMPLETED;
+                refundId = null;
+                refundRejection = e.reason();
+            }
             case RefundCompleted e -> {
                 status = PaymentStatus.REFUNDED;
                 refundLedgerTransactionId = e.ledgerTransactionId();
@@ -200,7 +220,7 @@ public final class Payment {
     public PaymentState state() {
         return new PaymentState(id, tenantId, sourceAccountId, destinationAccountId, amountCents, currency,
                 description, requestedBy, status, rejection, failureReason, retries, ledgerTransactionId,
-                refundLedgerTransactionId, createdAt, updatedAt, version);
+                refundLedgerTransactionId, refundId, refundRejection, createdAt, updatedAt, version);
     }
 
     private static Payment fromState(PaymentState s) {
@@ -219,6 +239,8 @@ public final class Payment {
         p.retries = s.retries();
         p.ledgerTransactionId = s.ledgerTransactionId();
         p.refundLedgerTransactionId = s.refundLedgerTransactionId();
+        p.refundId = s.refundId();
+        p.refundRejection = s.refundRejection();
         p.createdAt = s.createdAt();
         p.updatedAt = s.updatedAt();
         p.version = s.version();
@@ -247,6 +269,23 @@ public final class Payment {
 
     public String currency() {
         return currency;
+    }
+
+    public String description() {
+        return description;
+    }
+
+    public UUID ledgerTransactionId() {
+        return ledgerTransactionId;
+    }
+
+    /** Identifiant de la demande de remboursement en cours : la clé d'idempotence côté Ledger. */
+    public UUID refundId() {
+        return refundId;
+    }
+
+    public int retries() {
+        return retries;
     }
 
     public PaymentStatus status() {

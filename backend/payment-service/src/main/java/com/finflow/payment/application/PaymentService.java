@@ -1,5 +1,6 @@
 package com.finflow.payment.application;
 
+import com.finflow.payment.domain.IllegalTransitionException;
 import com.finflow.payment.domain.Payment;
 import com.finflow.payment.domain.PaymentStatus;
 import com.finflow.security.TenantContext;
@@ -35,15 +36,17 @@ public class PaymentService {
     private final PaymentEventStore store;
     private final PaymentQueries queries;
     private final AccountDirectory accounts;
+    private final LedgerGateway ledger;
     private final RiskCheck risk;
     private final TransactionTemplate tx;
     private final Clock clock;
 
     public PaymentService(PaymentEventStore store, PaymentQueries queries, AccountDirectory accounts,
-                          RiskCheck risk, TransactionTemplate tx, Clock clock) {
+                          LedgerGateway ledger, RiskCheck risk, TransactionTemplate tx, Clock clock) {
         this.store = store;
         this.queries = queries;
         this.accounts = accounts;
+        this.ledger = ledger;
         this.risk = risk;
         this.tx = tx;
         this.clock = clock;
@@ -86,7 +89,120 @@ public class PaymentService {
         if (payment.status() == PaymentStatus.VALIDATING) {
             payment = validate(payment.id(), correlationId);
         }
+        if (payment.status() == PaymentStatus.PROCESSING || payment.status() == PaymentStatus.FAILED) {
+            // Première tentative, ou reprise d'un rejeu : la clé comptable est la même (ADR-012).
+            payment = settle(payment.id(), correlationId);
+        }
         return new Result(payment, replayed);
+    }
+
+    /**
+     * Fait comptabiliser le paiement par le Ledger, hors transaction, puis enregistre la décision.
+     * Une panne ou une réponse perdue laisse le paiement {@code FAILED} : un rejeu de la même
+     * demande le reprend, et le Ledger renvoie la transaction déjà passée au lieu d'en refaire une.
+     */
+    Payment settle(UUID paymentId, String correlationId) {
+        Payment current = get(paymentId);
+        if (current.status() == PaymentStatus.FAILED) {
+            current = resume(paymentId, correlationId);
+        }
+        if (current.status() != PaymentStatus.PROCESSING) {
+            return current;
+        }
+        LedgerGateway.Outcome outcome = ledger.transfer(paymentId, current.sourceAccountId(),
+                current.destinationAccountId(), current.amountCents(), current.description());
+        try {
+            return tx.execute(status -> {
+                Payment latest = get(paymentId);
+                if (latest.status() != PaymentStatus.PROCESSING) {
+                    return latest;
+                }
+                Instant now = clock.instant();
+                switch (outcome) {
+                    case LedgerGateway.Outcome.Posted posted -> latest.complete(posted.transactionId(), now);
+                    case LedgerGateway.Outcome.Refused refused -> latest.reject(refused.code(), refused.detail(), now);
+                    case LedgerGateway.Outcome.Unavailable down -> {
+                        log.warn("Comptabilisation du paiement {} en échec : {}", paymentId, down.reason());
+                        latest.fail(down.reason(), now);
+                    }
+                }
+                store.append(latest, correlationId);
+                return latest;
+            });
+        } catch (ConcurrencyConflictException e) {
+            return get(paymentId);
+        }
+    }
+
+    private Payment resume(UUID paymentId, String correlationId) {
+        try {
+            return tx.execute(status -> {
+                Payment latest = get(paymentId);
+                if (latest.status() == PaymentStatus.FAILED && latest.retries() < Payment.MAX_RETRIES) {
+                    latest.retry(clock.instant());
+                    store.append(latest, correlationId);
+                }
+                return latest;
+            });
+        } catch (ConcurrencyConflictException e) {
+            return get(paymentId);
+        }
+    }
+
+    /**
+     * Rembourse un paiement comptabilisé par une contrepassation (ADR-012). Un paiement déjà en
+     * cours de remboursement est simplement repris, avec la même clé comptable.
+     */
+    public Payment refund(UUID paymentId, String reason, String correlationId) {
+        Payment current = get(paymentId);
+        if (current.status() == PaymentStatus.COMPLETED) {
+            try {
+                current = tx.execute(status -> {
+                    Payment latest = get(paymentId);
+                    latest.requestRefund(reason, clock.instant());
+                    store.append(latest, correlationId);
+                    return latest;
+                });
+            } catch (ConcurrencyConflictException e) {
+                current = get(paymentId);
+            }
+        }
+        if (current.status() != PaymentStatus.REFUND_PENDING) {
+            throw new IllegalTransitionException(paymentId, "rembourser", current.status(), null);
+        }
+        return settleRefund(paymentId, correlationId);
+    }
+
+    private Payment settleRefund(UUID paymentId, String correlationId) {
+        Payment current = get(paymentId);
+        if (current.status() != PaymentStatus.REFUND_PENDING) {
+            return current;
+        }
+        LedgerGateway.Outcome outcome = ledger.reverse(current.refundId(), current.ledgerTransactionId(),
+                "Remboursement du paiement " + paymentId);
+        try {
+            return tx.execute(status -> {
+                Payment latest = get(paymentId);
+                if (latest.status() != PaymentStatus.REFUND_PENDING) {
+                    return latest;
+                }
+                Instant now = clock.instant();
+                switch (outcome) {
+                    case LedgerGateway.Outcome.Posted posted -> latest.completeRefund(posted.transactionId(), now);
+                    case LedgerGateway.Outcome.Refused refused ->
+                            latest.rejectRefund(refused.code() + " : " + refused.detail(), now);
+                    case LedgerGateway.Outcome.Unavailable down -> {
+                        // Rien n'est décidé : le remboursement reste en attente et se rejoue tel quel.
+                        log.warn("Remboursement du paiement {} en attente : {}", paymentId, down.reason());
+                        return latest;
+                    }
+                }
+                store.append(latest, correlationId);
+                return latest;
+            });
+        } catch (ConcurrencyConflictException e) {
+            return get(paymentId);
+        }
     }
 
     /**

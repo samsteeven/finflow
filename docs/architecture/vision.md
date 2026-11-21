@@ -144,7 +144,7 @@ Le blueprint prévoit 16 semaines pour huit services. Avec le noyau, la feuille 
 |---|---|
 | 1 | **Fondations** : ADR, monorepo Maven, Docker Compose, Keycloak, Gateway, CI, contexte tenant et RLS, tenant-service |
 | 2 | **Account et Payment** : comptes et limites, event sourcing du paiement, machine à états, `Idempotency-Key`, API REST |
-| 3 | **Ledger** : partie double contrôlée en base, journal, event store, snapshots, projection des soldes, concurrence |
+| 3 | **Ledger** : partie double contrôlée en base (journal immuable = journal d'événements, soldes tenus par déclencheur), dépôts simulés, contrepassations, saga synchrone de Payment (comptabilisation, reprises, remboursements), concurrence ([ADR-011](adr/0011-grand-livre-en-partie-double.md), [ADR-012](adr/0012-comptabilisation-par-payment.md)) |
 | 4 | **Kafka** : contrats Avro et Schema Registry, outbox, consommateurs idempotents, saga orchestrée, reprises et DLQ |
 | 5 | **Front Angular** : Material, SignalStore, connexion OIDC, comptes, paiements, journal ; Playwright ; démonstrations panne, isolation, traçabilité |
 | 6 | **Production** : OpenTelemetry, Prometheus, Grafana, Resilience4j, Toxiproxy, k6 |

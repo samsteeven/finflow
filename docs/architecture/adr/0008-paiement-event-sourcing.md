@@ -9,11 +9,12 @@ Le blueprint applique l'event sourcing à Payment et Ledger seulement : chaque t
 ## Décision
 
 - **Agrégat en Java pur** (`Payment`, sans annotation de persistance). Ses événements forment une interface scellée (`PaymentEvent`) dont chaque événement est un `record`. Les décisions (`create`, `validate`, `reject`, `startProcessing`…) vérifient la machine à états et **renvoient** un événement. L'état n'est modifié que par `apply(événement)`, qu'on appelle à la décision comme au rejeu.
-- **Machine à états** : `CREATED → VALIDATING → PROCESSING → COMPLETED`, avec deux autres issues :
+- **Machine à états** : `CREATED → VALIDATING → PROCESSING → COMPLETED`, avec trois autres issues :
   - `VALIDATING → REJECTED` ;
+  - `PROCESSING → REJECTED`, quand le Ledger refuse pour fonds insuffisants ([ADR-012](0012-comptabilisation-par-payment.md)) ;
   - `PROCESSING → FAILED → PROCESSING`, pour une reprise bornée.
 
-  Remboursement : `COMPLETED → REFUND_PENDING → REFUNDED`. Toute autre transition lève une `IllegalTransitionException`.
+  Remboursement : `COMPLETED → REFUND_PENDING → REFUNDED`, ou retour `REFUND_PENDING → COMPLETED` si le Ledger refuse la contrepassation (`RefundRejected`). Toute autre transition lève une `IllegalTransitionException`.
 - **Event store en JDBC** (`payment_events`), sans JPA : un journal en ajout seul se décrit mieux en SQL qu'en entités. Clé primaire `(payment_id, version)`. Ajouter un événement à la version *n* + 1 alors qu'un autre traitement l'a déjà écrite viole la clé primaire. Cette violation devient une `ConcurrencyConflictException` (concurrence optimiste, sans verrou tenu pendant les appels réseau).
 - Le rôle applicatif n'a que `SELECT` et `INSERT` sur `payment_events` : **un événement ne se modifie ni ne se supprime**, et c'est PostgreSQL qui l'impose.
 - **Enveloppe** : `event_id`, `event_type`, `event_version`, `tenant_id`, `correlation_id`, `causation_id`, `occurred_at` et `payload` en `jsonb`. Le schéma de chaque événement est versionné dès le départ pour préparer Kafka (incrément 4).

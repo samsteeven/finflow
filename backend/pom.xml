@@ -24,6 +24,7 @@
     <module>tenant-service</module>
     <module>account-service</module>
     <module>payment-service</module>
+    <module>ledger-service</module>
     <module>api-gateway</module>
   </modules>
 

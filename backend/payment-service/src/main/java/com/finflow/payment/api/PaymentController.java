@@ -69,6 +69,23 @@ class PaymentController {
                 .body(PaymentResponse.of(result.payment().state()));
     }
 
+    /**
+     * Rembourse un paiement terminé par contrepassation au Ledger. Réservé à l'administrateur ;
+     * rappeler la route sur un remboursement en attente le reprend, sans double écriture.
+     */
+    @PostMapping("/{id}/refunds")
+    @PreAuthorize("hasRole('TENANT_ADMIN')")
+    PaymentResponse refund(@PathVariable UUID id,
+                           @RequestHeader(value = CORRELATION_ID, required = false) @Size(max = 100) String correlationId,
+                           @Valid @RequestBody(required = false) RefundRequest request) {
+        String correlation = correlationId == null ? UUID.randomUUID().toString() : correlationId;
+        String reason = request == null ? null : request.reason();
+        return PaymentResponse.of(service.refund(id, reason, correlation).state());
+    }
+
+    record RefundRequest(@Size(max = 140) String reason) {
+    }
+
     @GetMapping("/{id}")
     PaymentResponse get(@PathVariable UUID id) {
         return PaymentResponse.of(service.get(id).state());
@@ -97,11 +114,12 @@ class PaymentController {
 
     record PaymentResponse(UUID id, PaymentStatus status, UUID sourceAccountId, UUID destinationAccountId,
                            long amountCents, String currency, String description, Payment.Rejection rejection,
-                           UUID ledgerTransactionId, int version, Instant createdAt, Instant updatedAt) {
+                           UUID ledgerTransactionId, UUID refundLedgerTransactionId, String refundRejection,
+                           int version, Instant createdAt, Instant updatedAt) {
         static PaymentResponse of(PaymentState s) {
             return new PaymentResponse(s.id(), s.status(), s.sourceAccountId(), s.destinationAccountId(),
                     s.amountCents(), s.currency(), s.description(), s.rejection(), s.ledgerTransactionId(),
-                    s.version(), s.createdAt(), s.updatedAt());
+                    s.refundLedgerTransactionId(), s.refundRejection(), s.version(), s.createdAt(), s.updatedAt());
         }
     }
 

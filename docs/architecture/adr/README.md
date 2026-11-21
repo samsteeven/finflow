@@ -12,3 +12,5 @@
 | [008](0008-paiement-event-sourcing.md) | Event sourcing du paiement, en JDBC, avec version optimiste et snapshots | acceptée |
 | [009](0009-idempotency-key.md) | Idempotency-Key sur la création d'un paiement | acceptée |
 | [010](0010-validation-synchrone-et-limites.md) | Validation par appel synchrone à Account, limites sous verrou consultatif | acceptée |
+| [011](0011-grand-livre-en-partie-double.md) | Grand livre en partie double, garanti par PostgreSQL | acceptée |
+| [012](0012-comptabilisation-par-payment.md) | Comptabilisation orchestrée par Payment, d'abord en synchrone | acceptée |

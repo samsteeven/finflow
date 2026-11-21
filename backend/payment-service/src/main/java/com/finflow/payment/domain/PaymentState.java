@@ -19,6 +19,8 @@ public record PaymentState(
         int retries,
         UUID ledgerTransactionId,
         UUID refundLedgerTransactionId,
+        UUID refundId,
+        String refundRejection,
         Instant createdAt,
         Instant updatedAt,
         int version) {

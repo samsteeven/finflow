@@ -33,6 +33,10 @@ finflow:
     base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
     connect-timeout: 1s
     read-timeout: 2s
+  ledger:
+    base-url: ${LEDGER_SERVICE_URL:http://localhost:8084}
+    connect-timeout: 1s
+    read-timeout: 3s
 
 server:
   port: ${PORT:8083}

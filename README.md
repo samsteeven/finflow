@@ -4,7 +4,7 @@ Plateforme B2B multi-tenant de **simulation** d'opérations financières : compt
 
 Le sujet du projet est la **cohérence financière dans un système distribué** : pannes, messages dupliqués, traitements concurrents et opérations asynchrones ne doivent jamais produire de double débit ni d'écriture déséquilibrée. La cible complète (event sourcing, saga, outbox, Kafka, partie double) est décrite dans [docs/architecture/vision.md](docs/architecture/vision.md), et les décisions dans les [ADR](docs/architecture/adr/README.md).
 
-## État : incréments 1 et 2, fondations, comptes et paiements
+## État : incréments 1 à 3, fondations, comptes, paiements et grand livre
 
 | Élément | Contenu |
 |---|---|
@@ -13,6 +13,7 @@ Le sujet du projet est la **cohérence financière dans un système distribué**
 | `tenant-service` | Organisations et appartenances, `POST /api/v1/tenants` (administrateur de plateforme), `GET /api/v1/tenants/current`, `GET /api/v1/tenants/{id}`, `GET /api/v1/tenants/current/members` ; erreurs en Problem Details |
 | `account-service` | Comptes en EUR, statuts (`ACTIVE`, `FROZEN`, `CLOSED`), limites par opération et journalière en centimes ; compte clôturé figé par un déclencheur PostgreSQL |
 | `payment-service` | Paiement en **event sourcing** (JDBC, version optimiste, snapshots toutes les 5 versions, projection en ligne), machine à états complète, **`Idempotency-Key`** obligatoire, validation par appel à Account en relayant le jeton, limites sous verrou consultatif par compte source ; `GET /api/v1/payments/{id}/events` pour l'historique ([ADR-008](docs/architecture/adr/0008-paiement-event-sourcing.md), [ADR-009](docs/architecture/adr/0009-idempotency-key.md), [ADR-010](docs/architecture/adr/0010-validation-synchrone-et-limites.md)) |
+| `ledger-service` | **Grand livre en partie double**, garanti par PostgreSQL : équilibre vérifié au `COMMIT` par des déclencheurs de contrainte différés, journal en ajout seul, soldes mis à jour uniquement par les écritures (aucun droit de modification pour le rôle applicatif), aucun découvert sur un compte client, contrepassation vérifiée comme inverse exact de l'original ; dépôts simulés, relevé et soldes ; écritures internes (`/internal/**`) non routées par la Gateway ([ADR-011](docs/architecture/adr/0011-grand-livre-en-partie-double.md), [ADR-012](docs/architecture/adr/0012-comptabilisation-par-payment.md)) |
 | `shared/security-starter` | Conversion du jeton Keycloak (rôles du realm, claim `tenant_id`), `TenantContext`, gestionnaires de transactions JPA et JDBC qui posent le tenant **à chaque transaction**, chaîne de sécurité commune |
 | `shared/test-support` | Faux Keycloak (JWKS local, jetons signés validés par la configuration de production) et base PostgreSQL de test avec rôles propriétaire et applicatif |
 | Isolation | RLS PostgreSQL **forcée**, rôle applicatif sans `BYPASSRLS` ni droit de suppression, refus par défaut sans contexte ([ADR-005](docs/architecture/adr/0005-rls-et-contexte-par-transaction.md)) |
@@ -20,7 +21,7 @@ Le sujet du projet est la **cohérence financière dans un système distribué**
 | Docker Compose | PostgreSQL 18 (une base et deux rôles par service), Keycloak 26, Kafka 4 KRaft à un nœud (profil `kafka`) ([ADR-006](docs/architecture/adr/0006-pile-locale-sobre-en-memoire.md)) |
 | CI | Tests unitaires et d'intégration (Testcontainers), puis vérification de la pile avec de vrais jetons Keycloak |
 
-Un paiement validé s'arrête pour l'instant à l'état `PROCESSING` : sa comptabilisation par le Ledger arrive à l'incrément 3, la saga et Kafka à l'incrément 4. Le front Angular et AWS viennent ensuite (voir la [feuille de route](docs/architecture/vision.md#feuille-de-route)).
+Payment orchestre désormais la comptabilisation, en synchrone : un paiement validé est confié au Ledger et finit `COMPLETED`, `REJECTED` (fonds insuffisants) ou `FAILED` (Ledger indisponible, repris par un rejeu de la même `Idempotency-Key` sans double écriture). Un paiement terminé se rembourse par contrepassation (`POST /api/v1/payments/{id}/refunds`). Kafka, l'outbox et la reprise automatique de la saga arrivent à l'incrément 4. Le front Angular et AWS viennent ensuite (voir la [feuille de route](docs/architecture/vision.md#feuille-de-route)).
 
 ## Ce que les tests vérifient
 
@@ -53,9 +54,25 @@ Un paiement validé s'arrête pour l'instant à l'état `PROCESSING` : sa compta
   - le journal est immuable pour le rôle applicatif ;
   - deux écritures concurrentes de la même version ne passent pas toutes les deux ;
   - la projection ne recule jamais.
-- **Pile réelle** (`scripts/verifier-pile.sh`, dans la CI) : jetons émis par Keycloak, claim `tenant_id`, audience, routage par la Gateway, isolation entre Alpha et Beta, transfert de 1 500 €, rejeu idempotent, historique des événements, refus par limite et refus d'un compte d'une autre organisation.
+- **Grand livre** (`PostingTest`, `LedgerDatabaseIT`, `LedgerApiIT`, `LedgerConcurrencyIT`) :
+  - en SQL brut avec le rôle applicatif : une transaction déséquilibrée, d'une seule ligne ou sans ligne est refusée au `COMMIT`, une ligne ajoutée après coup aussi ;
+  - le journal ne se modifie ni ne se supprime, un solde ne se modifie ni ne se fixe à la création ;
+  - aucun compte client ne passe sous zéro, la compensation si ;
+  - une contrepassation doit être l'inverse exact de l'original, une seule fois, et ne se contrepasse pas ;
+  - **dix envois simultanés du même paiement ne sont comptabilisés qu'une fois** ;
+  - **quarante virements croisés A→B / B→A ne s'interbloquent pas** et conservent l'argent ;
+  - **dix dépenses simultanées de 300 € sur un solde de 1 000 € : trois passent, sept sont refusées** ;
+  - les soldes égalent toujours la somme des écritures (`comptes_incoherents()` renvoie zéro ligne) ;
+  - isolation entre organisations sur les soldes, relevés et transactions.
+- **Saga de Payment** (`PaymentApiIT`, `PaymentConcurrencyIT`) :
+  - fonds insuffisants : `REJECTED` avec le motif du Ledger, sans entamer la limite journalière ;
+  - Ledger en panne : `FAILED`, puis reprise par rejeu de la même clé ;
+  - **réponse perdue après comptabilisation** : la reprise ne double pas l'écriture ;
+  - reprises bornées à trois ;
+  - remboursement par contrepassation, refusé si le destinataire a dépensé, repris sans double contrepassation, **six remboursements simultanés n'en passent qu'un**.
+- **Pile réelle** (`scripts/verifier-pile.sh`, dans la CI) : jetons émis par Keycloak, claim `tenant_id`, audience, routage par la Gateway, isolation entre Alpha et Beta, dépôt simulé, transfert de 1 500 € comptabilisé, soldes, rejeu sans double écriture, remboursement et soldes rétablis, écritures internes non routées, refus par limite ou fonds insuffisants et refus d'un compte d'une autre organisation.
 
-Les régressions de sécurité et de cohérence sont vérifiées par mutation : 8 sur 8 détectées à l'incrément 1, 15 sur 15 à l'incrément 2.
+Les régressions de sécurité et de cohérence sont vérifiées par mutation : 8 sur 8 détectées à l'incrément 1, 15 sur 15 à l'incrément 2, 24 sur 24 à l'incrément 3 (équilibre, découvert, droits sur le journal et les soldes, verrous, idempotence, relais du jeton, reprises de la saga).
 
 ## Lancer en local
 
@@ -82,6 +99,10 @@ cd backend && ./mvnw -pl payment-service spring-boot:run
 ```
 
 ```bash
+cd backend && ./mvnw -pl ledger-service spring-boot:run
+```
+
+```bash
 cd backend && ./mvnw -pl api-gateway spring-boot:run
 ```
 
@@ -95,6 +116,7 @@ bash scripts/verifier-pile.sh
 | tenant-service | http://localhost:8081 |
 | account-service | http://localhost:8082 |
 | payment-service | http://localhost:8083 |
+| ledger-service | http://localhost:8084 |
 | Keycloak | http://localhost:8180 (console : `admin` / `admin_dev`) |
 | PostgreSQL | `localhost:5439` |
 | Kafka (profil `kafka`) | `localhost:9094` |

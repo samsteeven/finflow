@@ -99,6 +99,60 @@ class PaymentTest {
     }
 
     @Test
+    void le_ledger_peut_rejeter_un_paiement_en_cours_de_comptabilisation() {
+        Payment payment = initiate();
+        payment.validate(T0.plusSeconds(1));
+
+        payment.reject("FONDS_INSUFFISANTS", "solde insuffisant", T0.plusSeconds(2));
+
+        assertThat(payment.status()).isEqualTo(PaymentStatus.REJECTED);
+        assertThat(payment.state().rejection().rule()).isEqualTo("FONDS_INSUFFISANTS");
+        assertThatThrownBy(() -> payment.complete(UUID.randomUUID(), T0.plusSeconds(3)))
+                .isInstanceOf(IllegalTransitionException.class);
+    }
+
+    @Test
+    void un_paiement_termine_ne_peut_plus_etre_rejete() {
+        Payment payment = initiate();
+        payment.validate(T0.plusSeconds(1));
+        payment.complete(UUID.randomUUID(), T0.plusSeconds(2));
+
+        assertThatThrownBy(() -> payment.reject("X", "y", T0.plusSeconds(3)))
+                .isInstanceOf(IllegalTransitionException.class);
+    }
+
+    @Test
+    void un_remboursement_refuse_remet_le_paiement_a_termine_et_chaque_demande_a_sa_propre_cle() {
+        Payment payment = initiate();
+        payment.validate(T0.plusSeconds(1));
+        payment.complete(UUID.randomUUID(), T0.plusSeconds(2));
+
+        payment.requestRefund("première demande", T0.plusSeconds(3));
+        UUID firstRefund = payment.refundId();
+        assertThat(firstRefund).isNotNull();
+        payment.rejectRefund("FONDS_INSUFFISANTS : le destinataire a dépensé", T0.plusSeconds(4));
+
+        assertThat(payment.status()).isEqualTo(PaymentStatus.COMPLETED);
+        assertThat(payment.refundId()).isNull();
+        assertThat(payment.state().refundRejection()).contains("FONDS_INSUFFISANTS");
+
+        payment.requestRefund("seconde demande", T0.plusSeconds(5));
+        assertThat(payment.refundId()).isNotNull().isNotEqualTo(firstRefund);
+        assertThat(payment.status()).isEqualTo(PaymentStatus.REFUND_PENDING);
+    }
+
+    @Test
+    void on_ne_refuse_un_remboursement_que_s_il_est_en_attente() {
+        Payment payment = initiate();
+        payment.validate(T0.plusSeconds(1));
+        payment.complete(UUID.randomUUID(), T0.plusSeconds(2));
+
+        assertThatThrownBy(() -> payment.rejectRefund("x", T0.plusSeconds(3)))
+                .isInstanceOf(IllegalTransitionException.class);
+    }
+
+
+    @Test
     void le_rejeu_des_evenements_reconstruit_exactement_l_etat() {
         Payment original = initiate();
         original.validate(T0.plusSeconds(1));

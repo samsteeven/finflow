@@ -48,7 +48,12 @@ public sealed interface PaymentEvent {
     record PaymentRetried(UUID paymentId, int attempt, Instant occurredAt) implements PaymentEvent {
     }
 
-    record RefundRequested(UUID paymentId, String reason, Instant occurredAt) implements PaymentEvent {
+    record RefundRequested(UUID paymentId, UUID refundId, String reason, Instant occurredAt)
+            implements PaymentEvent {
+    }
+
+    /** Le Ledger a refusé la contrepassation (le destinataire n'a plus les fonds) : retour à COMPLETED. */
+    record RefundRejected(UUID paymentId, String reason, Instant occurredAt) implements PaymentEvent {
     }
 
     record RefundCompleted(UUID paymentId, UUID ledgerTransactionId, Instant occurredAt) implements PaymentEvent {

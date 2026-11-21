@@ -49,6 +49,7 @@ class GatewayRoutingTest {
         registry.add("TENANT_SERVICE_URL", () -> downstream);
         registry.add("ACCOUNT_SERVICE_URL", () -> downstream);
         registry.add("PAYMENT_SERVICE_URL", () -> downstream);
+        registry.add("LEDGER_SERVICE_URL", () -> downstream);
     }
 
     @BeforeEach
@@ -112,6 +113,23 @@ class GatewayRoutingTest {
     }
 
     @Test
+    void la_partie_publique_du_ledger_est_routee_mais_jamais_ses_ecritures_internes() {
+        String token = ISSUER.token().tenant(UUID.randomUUID()).roles("tenant-admin").build();
+
+        client.get().uri("/api/v1/ledger/accounts/" + UUID.randomUUID() + "/balance")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange().expectStatus().isOk();
+        assertThat(CALLS).hasValue(1);
+
+        // Les écritures internes ne sont pas atteignables de l'extérieur, même avec un jeton valide.
+        client.post().uri("/internal/v1/ledger/transfers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange().expectStatus().isNotFound();
+        client.post().uri("/internal/v1/ledger/reversals").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange().expectStatus().isNotFound();
+        assertThat(CALLS).hasValue(1);
+    }
+
+    @Test
     void les_en_tetes_d_identite_forges_par_le_client_sont_retires() {
         String token = ISSUER.token().tenant(UUID.randomUUID()).build();
 
@@ -127,7 +145,7 @@ class GatewayRoutingTest {
 
     @Test
     void une_route_inconnue_ne_donne_rien_meme_authentifie() {
-        client.get().uri("/api/v1/ledger/transactions/1")
+        client.get().uri("/api/v1/reports/summary")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + ISSUER.token().build())
                 .exchange().expectStatus().isNotFound();
         assertThat(CALLS).hasValue(0);
