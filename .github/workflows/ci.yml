@@ -37,11 +37,31 @@ jobs:
           path: backend/**/target/*-reports/
           retention-days: 7
 
-  pile:
-    name: Pile locale (Keycloak, Kafka, Gateway, tenant, account, payment, ledger)
-    needs: backend
+  frontend:
+    name: Front (compilation et tests unitaires)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Compiler
+        run: npx ng build
+      - name: Tests unitaires
+        run: npx ng test --watch=false
+
+  pile:
+    name: Pile locale et parcours Playwright (Keycloak, Kafka, services, front)
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -71,6 +91,28 @@ jobs:
           done
       - name: Vérifier la pile avec de vrais jetons Keycloak
         run: bash scripts/verifier-pile.sh
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Installer le front et Chromium
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Parcours Playwright contre la vraie pile
+        working-directory: frontend
+        run: npx playwright test
+      - name: Rapport Playwright
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rapport-playwright
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7
       - name: Journaux
         if: failure()
         run: |

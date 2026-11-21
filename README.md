@@ -4,7 +4,7 @@ Plateforme B2B multi-tenant de **simulation** d'opérations financières : compt
 
 Le sujet du projet est la **cohérence financière dans un système distribué** : pannes, messages dupliqués, traitements concurrents et opérations asynchrones ne doivent jamais produire de double débit ni d'écriture déséquilibrée. La cible complète (event sourcing, saga, outbox, Kafka, partie double) est décrite dans [docs/architecture/vision.md](docs/architecture/vision.md), et les décisions dans les [ADR](docs/architecture/adr/README.md).
 
-## État : incréments 1 à 4, fondations, comptes, paiements, grand livre et Kafka
+## État : incréments 1 à 5, fondations, comptes, paiements, grand livre, Kafka et front
 
 | Élément | Contenu |
 |---|---|
@@ -17,14 +17,15 @@ Le sujet du projet est la **cohérence financière dans un système distribué**
 | `shared/messaging` | **Outbox transactionnelle**, relais vers Kafka (au moins une fois, ordre préservé, un seul relais actif), **contrats Avro** (`EventEnvelope`, `PaymentChanged`, `TransactionPosted`) avec Schema Registry, table `inbox` des consommateurs ([ADR-013](docs/architecture/adr/0013-outbox-kafka-et-avro.md)) |
 | Projections d'Account | Consommateur Kafka idempotent (événement traité une fois, version d'agrégat, file morte `.dlq`) : solde projeté et activité des paiements d'un compte, `GET /api/v1/accounts/{id}/activity` ([ADR-014](docs/architecture/adr/0014-consommateurs-idempotents.md)) |
 | Reprise de la saga | Worker de Payment : un paiement en suspens est repris seul, avec la même clé comptable, après un délai qui double à chaque reprise, par un compte de service Keycloak ([ADR-015](docs/architecture/adr/0015-reprise-automatique-de-la-saga.md)) |
+| `frontend` | **Angular 22** (sans zone, composants autonomes) avec Angular Material et NgRx SignalStore : connexion Keycloak (code d'autorisation + PKCE, jeton limité à l'onglet), comptes (ouverture, plafonds, gel, clôture, dépôt), journal comptable, solde du Ledger et solde projeté, virements avec clé d'idempotence, historique d'événements d'un paiement, remboursement ; actions d'administration masquées pour un simple membre ([ADR-016](docs/architecture/adr/0016-front-authentification-et-verite-des-donnees.md)) |
 | `shared/security-starter` | Conversion du jeton Keycloak (rôles du realm, claim `tenant_id`), `TenantContext`, gestionnaires de transactions JPA et JDBC qui posent le tenant **à chaque transaction**, chaîne de sécurité commune |
 | `shared/test-support` | Faux Keycloak (JWKS local, jetons signés validés par la configuration de production) et base PostgreSQL de test avec rôles propriétaire et applicatif |
 | Isolation | RLS PostgreSQL **forcée**, rôle applicatif sans `BYPASSRLS` ni droit de suppression, refus par défaut sans contexte ([ADR-005](docs/architecture/adr/0005-rls-et-contexte-par-transaction.md)) |
 | Keycloak | Realm `finflow` importé au démarrage : client `finflow-web` (PKCE S256), audience `finflow-api`, attribut `tenant_id` modifiable par un administrateur seulement ([ADR-004](docs/architecture/adr/0004-keycloak-et-tenant-dans-le-jeton.md)) |
 | Docker Compose | PostgreSQL 18 (une base et deux rôles par service), Keycloak 26, Kafka 4 KRaft à un nœud et Schema Registry (profil `kafka`) ([ADR-006](docs/architecture/adr/0006-pile-locale-sobre-en-memoire.md)) |
-| CI | Tests unitaires et d'intégration (Testcontainers), puis vérification de la pile avec de vrais jetons Keycloak |
+| CI | Tests unitaires et d'intégration (Testcontainers), compilation et tests du front, puis vérification de la pile avec de vrais jetons Keycloak et parcours Playwright |
 
-Payment orchestre désormais la comptabilisation, en synchrone : un paiement validé est confié au Ledger et finit `COMPLETED`, `REJECTED` (fonds insuffisants) ou `FAILED` (Ledger indisponible, repris par un rejeu de la même `Idempotency-Key` sans double écriture). Un paiement terminé se rembourse par contrepassation (`POST /api/v1/payments/{id}/refunds`). Depuis l'incrément 4, Payment et le Ledger écrivent leurs événements dans une **outbox** (même transaction que le changement), un relais les publie sur Kafka, Account les projette, et un paiement resté en suspens (Ledger arrêté, réponse perdue) est **repris automatiquement**, sans double écriture. Kafka peut s'arrêter : les services continuent, les événements partent à son retour. Le front Angular et AWS viennent ensuite (voir la [feuille de route](docs/architecture/vision.md#feuille-de-route)).
+Payment orchestre désormais la comptabilisation, en synchrone : un paiement validé est confié au Ledger et finit `COMPLETED`, `REJECTED` (fonds insuffisants) ou `FAILED` (Ledger indisponible, repris par un rejeu de la même `Idempotency-Key` sans double écriture). Un paiement terminé se rembourse par contrepassation (`POST /api/v1/payments/{id}/refunds`). Depuis l'incrément 4, Payment et le Ledger écrivent leurs événements dans une **outbox** (même transaction que le changement), un relais les publie sur Kafka, Account les projette, et un paiement resté en suspens (Ledger arrêté, réponse perdue) est **repris automatiquement**, sans double écriture. Kafka peut s'arrêter : les services continuent, les événements partent à son retour. Le front Angular (incrément 5) montre tout cela à l'écran ; l'observabilité et AWS viennent ensuite (voir la [feuille de route](docs/architecture/vision.md#feuille-de-route)).
 
 ## Ce que les tests vérifient
 
@@ -92,13 +93,21 @@ Payment orchestre désormais la comptabilisation, en synchrone : un paiement val
   - le délai double à chaque reprise, et, après trois reprises, le paiement attend une décision humaine ;
   - un remboursement en attente est repris, chaque reprise s'exécute dans l'organisation de son paiement ;
   - l'en-tête d'organisation n'a d'effet que pour un jeton de service sans organisation, sur les routes internes.
+- **Front, tests unitaires** (Vitest) : conversion des montants sans nombre à virgule, lecture du jeton, rôles, jeton expiré jamais envoyé, jeton envoyé à la seule Gateway, 401 renvoyé vers Keycloak, destination de retour jamais externe, stores (solde illisible sans effet sur la liste, relecture bornée d'un paiement, clé d'idempotence conservée).
+- **Front, parcours Playwright contre la vraie pile** (`frontend/e2e`) :
+  - connexion par Keycloak avec PKCE S256, jeton en `sessionStorage` et jamais en `localStorage`, déconnexion, page profonde restituée ;
+  - ouvrir deux comptes, déposer, virer, lire le journal et l'historique d'événements, voir le solde projeté par Kafka rejoindre celui du Ledger, rembourser ;
+  - virement refusé pour fonds insuffisants ou plafond dépassé, avec le motif ; compte gelé non proposé ; saisie invalide refusée ;
+  - **isolation** : Bruno, d'une autre organisation, ne voit ni le compte, ni le solde, ni le paiement d'Alice, même avec les identifiants ;
+  - **rôles** : Clara, simple membre, ne voit aucune action d'administration, et un appel direct reçoit 403 ;
+  - **panne** (`E2E_PANNES=1`) : le Ledger est arrêté, le paiement passe en échec technique, puis se termine seul à son retour avec un seul mouvement.
 - **Pile réelle** (`scripts/verifier-pile.sh`, dans la CI) : jetons émis par Keycloak, claim `tenant_id`, audience, routage par la Gateway, isolation entre Alpha et Beta, dépôt simulé, transfert de 1 500 € comptabilisé, soldes, rejeu sans double écriture, remboursement et soldes rétablis, écritures internes non routées, refus par limite ou fonds insuffisants et refus d'un compte d'une autre organisation, sujets Avro dans le Schema Registry, soldes projetés rejoignant ceux du Ledger, jeton du compte de service.
 
-Les régressions de sécurité et de cohérence sont vérifiées par mutation : 8 sur 8 détectées à l'incrément 1, 15 sur 15 à l'incrément 2, 24 sur 24 à l'incrément 3 (équilibre, découvert, droits sur le journal et les soldes, verrous, idempotence, relais du jeton, reprises de la saga), 27 sur 27 à l'incrément 4 (ordre et verrou du relais, purge, clé de partition, causalité, délai exponentiel, inbox et garde de version, RLS des projections, compte de service).
+Les régressions de sécurité et de cohérence sont vérifiées par mutation : 8 sur 8 détectées à l'incrément 1, 15 sur 15 à l'incrément 2, 24 sur 24 à l'incrément 3 (équilibre, découvert, droits sur le journal et les soldes, verrous, idempotence, relais du jeton, reprises de la saga), 27 sur 27 à l'incrément 4 (ordre et verrou du relais, purge, clé de partition, causalité, délai exponentiel, inbox et garde de version, RLS des projections, compte de service). Le front est vérifié de la même façon : 10 mutations sur 10 détectées (redirection externe, jeton envoyé à tout hôte, 401 ignoré, jeton expiré accepté, rôle déduit à tort, montants, relecture sans borne, comptes gelés proposés, solde illisible).
 
 ## Lancer en local
 
-Prérequis : Java 25, Docker. Maven est fourni par le wrapper.
+Prérequis : Java 25, Docker, et Node 24 pour le front. Maven est fourni par le wrapper.
 
 ```bash
 docker compose up -d
@@ -140,6 +149,22 @@ cd backend && ./mvnw -pl api-gateway spring-boot:run
 bash scripts/verifier-pile.sh
 ```
 
+Pour lancer les cinq services d'un coup depuis les jars (après `./mvnw -DskipTests package`), puis le front et ses tests de bout en bout :
+
+```bash
+scripts/lancer-services.sh start
+```
+
+```bash
+cd frontend && npm ci && npx ng serve
+```
+
+```bash
+cd frontend && npx playwright install chromium && npx playwright test
+```
+
+Le front est servi sur http://localhost:4200 (`alice` / `finflow-dev`). Les tests Playwright démarrent le front eux-mêmes et supposent la pile démarrée. `scripts/lancer-services.sh stop` arrête les services ; `E2E_PANNES=1` ajoute le parcours qui arrête le Ledger.
+
 | Service | Adresse |
 |---|---|
 | Gateway | http://localhost:8080 |
@@ -151,6 +176,7 @@ bash scripts/verifier-pile.sh
 | PostgreSQL | `localhost:5439` |
 | Kafka (profil `kafka`) | `localhost:9094` |
 | Schema Registry (profil `kafka`) | http://localhost:8085 |
+| Front Angular | http://localhost:4200 |
 
 Comptes du realm local (mot de passe `finflow-dev`) :
 
@@ -159,6 +185,7 @@ Comptes du realm local (mot de passe `finflow-dev`) :
 | `plateforme` | `platform-admin` | aucune |
 | `alice` | `tenant-admin` | Alpha Industries |
 | `bruno` | `tenant-admin` | Beta Logistique |
+| `clara` | `tenant-member` | Alpha Industries |
 
 Le client `payment-service` (`client_credentials`, rôle `service`, secret de développement) est le compte technique de la reprise des sagas. Le client `finflow-dev-cli`, qui délivre des jetons par mot de passe pour les scripts, n'existe que dans ce realm de développement. Le realm se régénère avec `python infrastructure/keycloak/generer-realm.py`.
 

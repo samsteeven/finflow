@@ -245,6 +245,30 @@
           "temporary": false
         }
       ]
+    },
+    {
+      "username": "clara",
+      "email": "clara@finflow.test",
+      "emailVerified": true,
+      "firstName": "Clara",
+      "lastName": "Alpha",
+      "enabled": true,
+      "attributes": {
+        "tenant_id": [
+          "a1a1a1a1-0000-4000-8000-000000000001"
+        ]
+      },
+      "realmRoles": [
+        "default-roles-finflow",
+        "tenant-member"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "finflow-dev",
+          "temporary": false
+        }
+      ]
     }
   ],
   "components": {

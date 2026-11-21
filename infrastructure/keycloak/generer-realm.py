@@ -116,6 +116,7 @@ realm = {
         user("plateforme", "Paula", "Plateforme", ["platform-admin"]),
         user("alice", "Alice", "Alpha", ["tenant-admin"], ALPHA),
         user("bruno", "Bruno", "Beta", ["tenant-admin"], BETA),
+        user("clara", "Clara", "Alpha", ["tenant-member"], ALPHA),
     ],
     "components": {
         "org.keycloak.userprofile.UserProfileProvider": [{
