@@ -31,6 +31,10 @@
       {
         "name": "service",
         "description": "Compte technique d'un service (reprise des sagas, ADR-015)"
+      },
+      {
+        "name": "metrics",
+        "description": "Lecture des métriques Prometheus (ADR-017)"
       }
     ]
   },
@@ -167,6 +171,48 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "prometheus",
+      "name": "FinFlow (Prometheus)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "prometheus-dev-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience finflow-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "finflow-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -176,6 +222,14 @@
       "serviceAccountClientId": "payment-service",
       "realmRoles": [
         "service"
+      ]
+    },
+    {
+      "username": "service-account-prometheus",
+      "enabled": true,
+      "serviceAccountClientId": "prometheus",
+      "realmRoles": [
+        "metrics"
       ]
     },
     {

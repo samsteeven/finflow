@@ -27,6 +27,7 @@ class GatewaySecurityConfig {
         return http
                 .authorizeExchange(exchanges -> exchanges
                         .pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                        .pathMatchers("/actuator/prometheus").hasRole("METRICS")
                         .pathMatchers(HttpMethod.OPTIONS).permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(

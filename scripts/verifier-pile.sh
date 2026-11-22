@@ -145,8 +145,8 @@ attendre() { # description, valeur attendue, commande qui produit la valeur ; r�
 activite() { # jeton, compte -> champ
   curl -sf -H "Authorization: Bearer $1" "$GATEWAY/api/v1/accounts/$2/activity"
 }
-verifier "sujet Avro des paiements" "payment.events-value"   "$(curl -sf "$REGISTRY/subjects" | jq -r '.[] | select(. == "payment.events-value")')"
-verifier "sujet Avro du grand livre" "ledger.events-value"   "$(curl -sf "$REGISTRY/subjects" | jq -r '.[] | select(. == "ledger.events-value")')"
+attendre "sujet Avro des paiements" "payment.events-value"   'curl -sf "$REGISTRY/subjects" | jq -r ".[] | select(. == \"payment.events-value\")"'
+attendre "sujet Avro du grand livre" "ledger.events-value"   'curl -sf "$REGISTRY/subjects" | jq -r ".[] | select(. == \"ledger.events-value\")"'
 attendre "solde projeté du compte A rejoint le Ledger" "$(solde "$alice" "$compte_a")"   'activite "$alice" "$compte_a" | jq -r .projectedBalanceCents'
 attendre "solde projeté du compte B rejoint le Ledger" "$(solde "$alice" "$compte_b")"   'activite "$alice" "$compte_b" | jq -r .projectedBalanceCents'
 attendre "paiement remboursé visible dans l'activité" "REFUNDED"   'activite "$alice" "$compte_a" | jq -r --arg id "$id2" "[.payments[] | select(.paymentId == \$id)][0].status"'

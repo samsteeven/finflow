@@ -9,6 +9,9 @@ import org.springframework.test.context.DynamicPropertySource;
 
 /** Vrai PostgreSQL (rôle applicatif), faux Keycloak, faux account-service et faux Ledger. */
 @org.springframework.context.annotation.Import(TestServiceToken.class)
+// Les tests qui simulent des pannes en série ne doivent pas ouvrir le coupe-circuit par accident ;
+// LedgerProtectionIT le règle exprès (une propriété dynamique l'emporte sur celle-ci).
+@org.springframework.test.context.TestPropertySource(properties = "finflow.resilience.circuit-breaker.minimum-calls=100000")
 public abstract class PaymentIntegrationTest {
 
     static final ServiceDatabase DATABASE = ServiceDatabase.of("payment");

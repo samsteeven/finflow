@@ -29,10 +29,11 @@ public class RecoveryWorker implements SmartLifecycle {
     private final Duration interval;
     private final int baseDelaySeconds;
     private final int batchSize;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
     private ScheduledExecutorService executor;
     private volatile boolean running;
 
-    RecoveryWorker(PaymentService payments, PaymentQueries queries,
+    RecoveryWorker(PaymentService payments, PaymentQueries queries, io.micrometer.core.instrument.MeterRegistry meters,
                    @Value("${finflow.saga.recovery.interval:2s}") Duration interval,
                    @Value("${finflow.saga.recovery.base-delay:5s}") Duration baseDelay,
                    @Value("${finflow.saga.recovery.batch-size:20}") int batchSize) {
@@ -41,6 +42,7 @@ public class RecoveryWorker implements SmartLifecycle {
         this.interval = interval;
         this.baseDelaySeconds = (int) Math.max(1, baseDelay.toSeconds());
         this.batchSize = batchSize;
+        this.meters = meters;
     }
 
     /** Un tour de reprise ; renvoie le nombre de paiements repris. */
@@ -49,8 +51,10 @@ public class RecoveryWorker implements SmartLifecycle {
                 com.finflow.payment.domain.Payment.MAX_RETRIES, batchSize);
         for (PaymentQueries.Due item : due) {
             try {
-                payments.recover(item.tenantId(), item.paymentId());
+                var recovered = payments.recover(item.tenantId(), item.paymentId());
+                meters.counter("finflow.saga.recoveries", "result", recovered.status().name()).increment();
             } catch (RuntimeException e) {
+                meters.counter("finflow.saga.recoveries", "result", "ERROR").increment();
                 log.warn("Reprise du paiement {} en échec : {}", item.paymentId(), e.toString());
             }
         }

@@ -79,6 +79,7 @@ realm = {
         {"name": "tenant-admin", "description": "Administre son organisation"},
         {"name": "tenant-member", "description": "Membre d'une organisation"},
         {"name": "service", "description": "Compte technique d'un service (reprise des sagas, ADR-015)"},
+        {"name": "metrics", "description": "Lecture des métriques Prometheus (ADR-017)"},
     ]},
     "clients": [
         {
@@ -109,10 +110,20 @@ realm = {
             "serviceAccountsEnabled": True,
             "protocolMappers": mappers(),
         },
+        {
+            # Compte technique de Prometheus : il présente ce jeton à chaque collecte (ADR-017).
+            "clientId": "prometheus", "name": "FinFlow (Prometheus)", "enabled": True,
+            "publicClient": False, "secret": "prometheus-dev-secret", "protocol": "openid-connect",
+            "standardFlowEnabled": False, "implicitFlowEnabled": False, "directAccessGrantsEnabled": False,
+            "serviceAccountsEnabled": True,
+            "protocolMappers": mappers(),
+        },
     ],
     "users": [
         {"username": "service-account-payment-service", "enabled": True,
          "serviceAccountClientId": "payment-service", "realmRoles": ["service"]},
+        {"username": "service-account-prometheus", "enabled": True,
+         "serviceAccountClientId": "prometheus", "realmRoles": ["metrics"]},
         user("plateforme", "Paula", "Plateforme", ["platform-admin"]),
         user("alice", "Alice", "Alpha", ["tenant-admin"], ALPHA),
         user("bruno", "Bruno", "Beta", ["tenant-admin"], BETA),

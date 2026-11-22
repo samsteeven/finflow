@@ -65,7 +65,7 @@ class OutboxRelayIT {
                     id bigserial primary key, event_id uuid not null unique, topic varchar(100) not null,
                     message_key varchar(100) not null, payload text not null,
                     created_at timestamptz not null default now(), published_at timestamptz,
-                    attempts integer not null default 0, last_error text)""");
+                    attempts integer not null default 0, last_error text, trace_context text)""");
     }
 
     @AfterAll
@@ -158,6 +158,28 @@ class OutboxRelayIT {
 
         assertThat(consume(topic, 2)).extracting(r -> r.value().getEventId()).containsExactly(ids.getFirst(),
                 ids.getFirst());
+    }
+
+    @Test
+    void le_contexte_de_trace_de_la_requete_d_origine_voyage_dans_l_en_tete_kafka() {
+        String topic = topic();
+        String traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        Outbox traced = new Outbox(jdbc, () -> traceparent);
+        EventEnvelope envelope = Envelopes.of(UUID.randomUUID(), "test", "PaymentChanged", UUID.randomUUID(), 1,
+                UUID.fromString("a1a1a1a1-0000-4000-8000-000000000001"), "corr", null, Instant.now(),
+                PaymentChanged.newBuilder().setStatus("S").setSourceAccountId("a").setDestinationAccountId("b")
+                        .setAmountCents(100).setCurrency("EUR").build());
+        tx.executeWithoutResult(status -> traced.append(topic, envelope));
+        append(topic, UUID.randomUUID(), 1); // sans trace : aucun en-tête
+
+        relay(kafka.getBootstrapServers()).publishPending();
+
+        List<ConsumerRecord<String, EventEnvelope>> records = consume(topic, 2);
+        ConsumerRecord<String, EventEnvelope> withTrace = records.stream()
+                .filter(r -> r.value().getEventId().equals(envelope.getEventId())).findFirst().orElseThrow();
+        assertThat(new String(withTrace.headers().lastHeader("traceparent").value())).isEqualTo(traceparent);
+        assertThat(records.stream().filter(r -> r != withTrace).findFirst().orElseThrow().headers()
+                .lastHeader("traceparent")).isNull();
     }
 
     @Test

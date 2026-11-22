@@ -1,0 +1,14 @@
+[
+  {
+    "name": "ledger",
+    "listen": "[::]:28084",
+    "upstream": "host.docker.internal:8084",
+    "enabled": true
+  },
+  {
+    "name": "account",
+    "listen": "[::]:28082",
+    "upstream": "host.docker.internal:8082",
+    "enabled": true
+  }
+]

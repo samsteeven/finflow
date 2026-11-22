@@ -11,6 +11,11 @@ racine="$(cd "$(dirname "$0")/.." && pwd)"
 logs="$racine/.logs"
 java="${JAVA:-java}"
 export MESSAGING_ENABLED=true SAGA_RECOVERY_ENABLED=true
+# Les traces ne partent vers Jaeger que s'il tourne (docker compose --profile observability) : sans lui,
+# chaque envoi échouerait et remplirait les journaux.
+if curl -sf -o /dev/null "http://localhost:16686"; then
+  export TRACING_EXPORT_ENABLED=true
+fi
 
 # nom : module port options
 declare -A MODULE=([tenant]=tenant-service [account]=account-service [payment]=payment-service

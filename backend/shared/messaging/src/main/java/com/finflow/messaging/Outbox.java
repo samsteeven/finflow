@@ -13,16 +13,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class Outbox {
 
     private final JdbcTemplate jdbc;
+    private final java.util.function.Supplier<String> traceContext;
 
     public Outbox(JdbcTemplate jdbc) {
+        this(jdbc, () -> null);
+    }
+
+    /** @param traceContext fournit le contexte de trace W3C courant (ou null) à conserver avec l'événement */
+    public Outbox(JdbcTemplate jdbc, java.util.function.Supplier<String> traceContext) {
         this.jdbc = jdbc;
+        this.traceContext = traceContext;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void append(String topic, EventEnvelope envelope) {
         jdbc.update("""
-                insert into outbox (event_id, topic, message_key, payload)
-                values (?::uuid, ?, ?, ?)
-                """, envelope.getEventId(), topic, Envelopes.partitionKey(envelope), AvroJson.write(envelope));
+                insert into outbox (event_id, topic, message_key, payload, trace_context)
+                values (?::uuid, ?, ?, ?, ?)
+                """, envelope.getEventId(), topic, Envelopes.partitionKey(envelope), AvroJson.write(envelope),
+                traceContext.get());
     }
 }

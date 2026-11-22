@@ -32,11 +32,14 @@ class JdbcPaymentEventStore implements PaymentEventStore {
     private final JdbcClient jdbc;
     private final EventSerializer serializer;
     private final Outbox outbox;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
-    JdbcPaymentEventStore(JdbcClient jdbc, EventSerializer serializer, Outbox outbox) {
+    JdbcPaymentEventStore(JdbcClient jdbc, EventSerializer serializer, Outbox outbox,
+                          io.micrometer.core.instrument.MeterRegistry meters) {
         this.jdbc = jdbc;
         this.serializer = serializer;
         this.outbox = outbox;
+        this.meters = meters;
     }
 
     @Override
@@ -80,6 +83,7 @@ class JdbcPaymentEventStore implements PaymentEventStore {
         }
         project(payment.state());
         watch(payment.state());
+        countAfterCommit(events);
         if (payment.version() / SNAPSHOT_EVERY > payment.expectedVersion() / SNAPSHOT_EVERY) {
             snapshot(payment.state());
         }
@@ -177,6 +181,18 @@ class JdbcPaymentEventStore implements PaymentEventStore {
      * Tient à jour la liste des sagas en suspens (ADR-015) : un paiement y entre quand il attend
      * le Ledger, et en sort dès qu'il est terminé.
      */
+    /** Compte les événements écrits, mais seulement si la transaction aboutit : un retour arrière ne compte pas. */
+    private void countAfterCommit(List<PaymentEvent> events) {
+        List<String> types = events.stream().map(PaymentEvent::type).toList();
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        types.forEach(type -> meters.counter("finflow.payment.events", "type", type).increment());
+                    }
+                });
+    }
+
     private void watch(PaymentState s) {
         boolean pending = s.status() == com.finflow.payment.domain.PaymentStatus.PROCESSING
                 || s.status() == com.finflow.payment.domain.PaymentStatus.FAILED

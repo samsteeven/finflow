@@ -4,7 +4,7 @@ Plateforme B2B multi-tenant de **simulation** d'opérations financières : compt
 
 Le sujet du projet est la **cohérence financière dans un système distribué** : pannes, messages dupliqués, traitements concurrents et opérations asynchrones ne doivent jamais produire de double débit ni d'écriture déséquilibrée. La cible complète (event sourcing, saga, outbox, Kafka, partie double) est décrite dans [docs/architecture/vision.md](docs/architecture/vision.md), et les décisions dans les [ADR](docs/architecture/adr/README.md).
 
-## État : incréments 1 à 5, fondations, comptes, paiements, grand livre, Kafka et front
+## État : incréments 1 à 6, fondations, comptes, paiements, grand livre, Kafka, front et production
 
 | Élément | Contenu |
 |---|---|
@@ -17,6 +17,10 @@ Le sujet du projet est la **cohérence financière dans un système distribué**
 | `shared/messaging` | **Outbox transactionnelle**, relais vers Kafka (au moins une fois, ordre préservé, un seul relais actif), **contrats Avro** (`EventEnvelope`, `PaymentChanged`, `TransactionPosted`) avec Schema Registry, table `inbox` des consommateurs ([ADR-013](docs/architecture/adr/0013-outbox-kafka-et-avro.md)) |
 | Projections d'Account | Consommateur Kafka idempotent (événement traité une fois, version d'agrégat, file morte `.dlq`) : solde projeté et activité des paiements d'un compte, `GET /api/v1/accounts/{id}/activity` ([ADR-014](docs/architecture/adr/0014-consommateurs-idempotents.md)) |
 | Reprise de la saga | Worker de Payment : un paiement en suspens est repris seul, avec la même clé comptable, après un délai qui double à chaque reprise, par un compte de service Keycloak ([ADR-015](docs/architecture/adr/0015-reprise-automatique-de-la-saga.md)) |
+| `shared/platform` | Réglages d'observabilité communs (métriques Prometheus étiquetées par service, traces OpenTelemetry, identifiant de trace dans les journaux) et enveloppe de résilience : coupe-circuit et cloison Resilience4j nommés ([ADR-017](docs/architecture/adr/0017-observabilite-resilience-et-charge.md)) |
+| Observabilité | Métriques métier (événements de paiement, sagas en suspens ou bloquées, outbox, file morte, écritures du Ledger, rejeux d'idempotence), `/actuator/prometheus` réservé au rôle `metrics` (client Keycloak `prometheus`), traces qui **traversent Kafka**, règles d'alerte et tableau de bord Grafana généré (profil `observability`) |
+| Résilience | Circuit ouvert quand le Ledger ou Account s'enlise : les paiements échouent aussitôt en `FAILED` et la saga les reprend à son retour, sans double écriture ; un refus métier n'ouvre jamais le circuit. Quota par organisation à la Gateway (429 + `Retry-After`) |
+| Pannes et charge | Toxiproxy (profil `chaos`) et `scripts/chaos.py` ; scénarios k6 dans `load/` avec vérification que la somme des soldes est conservée |
 | `frontend` | **Angular 22** (sans zone, composants autonomes) avec Angular Material et NgRx SignalStore : connexion Keycloak (code d'autorisation + PKCE, jeton limité à l'onglet), comptes (ouverture, plafonds, gel, clôture, dépôt), journal comptable, solde du Ledger et solde projeté, virements avec clé d'idempotence, historique d'événements d'un paiement, remboursement ; actions d'administration masquées pour un simple membre ([ADR-016](docs/architecture/adr/0016-front-authentification-et-verite-des-donnees.md)) |
 | `shared/security-starter` | Conversion du jeton Keycloak (rôles du realm, claim `tenant_id`), `TenantContext`, gestionnaires de transactions JPA et JDBC qui posent le tenant **à chaque transaction**, chaîne de sécurité commune |
 | `shared/test-support` | Faux Keycloak (JWKS local, jetons signés validés par la configuration de production) et base PostgreSQL de test avec rôles propriétaire et applicatif |
@@ -29,6 +33,13 @@ Payment orchestre désormais la comptabilisation, en synchrone : un paiement val
 
 ## Ce que les tests vérifient
 
+- **Production** (incrément 6) :
+  - un Ledger en panne ouvre le circuit, et les appels suivants ne partent plus (`LedgerProtectionIT`) ;
+  - le circuit se referme au retour du Ledger et le paiement repris n'est pas doublé ;
+  - un refus métier du Ledger (fonds insuffisants) n'ouvre jamais le circuit ; Account a son propre circuit ;
+  - une organisation au-delà de son quota reçoit 429 sans atteindre le service, sans gêner les autres (`RateLimitTest`) ;
+  - `/actuator/prometheus` : 401 sans jeton, 403 pour un utilisateur, lisible par le client `prometheus` (`MetricsSecurityTest`) ;
+  - le contexte de trace est conservé dans l'outbox et republié en en-tête Kafka (`OutboxRelayIT`).
 - **Isolation en base** (`RowLevelSecurityIT`, connecté avec le rôle applicatif) :
   - une organisation ne lit pas une autre, même par son identifiant ;
   - sans contexte, aucune ligne n'est visible ;
@@ -103,7 +114,7 @@ Payment orchestre désormais la comptabilisation, en synchrone : un paiement val
   - **panne** (`E2E_PANNES=1`) : le Ledger est arrêté, le paiement passe en échec technique, puis se termine seul à son retour avec un seul mouvement.
 - **Pile réelle** (`scripts/verifier-pile.sh`, dans la CI) : jetons émis par Keycloak, claim `tenant_id`, audience, routage par la Gateway, isolation entre Alpha et Beta, dépôt simulé, transfert de 1 500 € comptabilisé, soldes, rejeu sans double écriture, remboursement et soldes rétablis, écritures internes non routées, refus par limite ou fonds insuffisants et refus d'un compte d'une autre organisation, sujets Avro dans le Schema Registry, soldes projetés rejoignant ceux du Ledger, jeton du compte de service.
 
-Les régressions de sécurité et de cohérence sont vérifiées par mutation : 8 sur 8 détectées à l'incrément 1, 15 sur 15 à l'incrément 2, 24 sur 24 à l'incrément 3 (équilibre, découvert, droits sur le journal et les soldes, verrous, idempotence, relais du jeton, reprises de la saga), 27 sur 27 à l'incrément 4 (ordre et verrou du relais, purge, clé de partition, causalité, délai exponentiel, inbox et garde de version, RLS des projections, compte de service). Le front est vérifié de la même façon : 10 mutations sur 10 détectées (redirection externe, jeton envoyé à tout hôte, 401 ignoré, jeton expiré accepté, rôle déduit à tort, montants, relecture sans borne, comptes gelés proposés, solde illisible).
+Les régressions de sécurité et de cohérence sont vérifiées par mutation : 8 sur 8 détectées à l'incrément 1, 15 sur 15 à l'incrément 2, 24 sur 24 à l'incrément 3 (équilibre, découvert, droits sur le journal et les soldes, verrous, idempotence, relais du jeton, reprises de la saga), 27 sur 27 à l'incrément 4 (ordre et verrou du relais, purge, clé de partition, causalité, délai exponentiel, inbox et garde de version, RLS des projections, compte de service). À l'incrément 6, 9 sur 9 (circuit jamais ouvert, jamais refermé, refus métier compté comme panne, circuit ouvert non reconnu comme refus, quota ignoré ou partagé entre organisations, `Retry-After` absent, métriques ouvertes à tout utilisateur, trace non propagée dans Kafka). Le front est vérifié de la même façon : 10 mutations sur 10 détectées (redirection externe, jeton envoyé à tout hôte, 401 ignoré, jeton expiré accepté, rôle déduit à tort, montants, relecture sans borne, comptes gelés proposés, solde illisible).
 
 ## Lancer en local
 
@@ -163,6 +174,32 @@ cd frontend && npm ci && npx ng serve
 cd frontend && npx playwright install chromium && npx playwright test
 ```
 
+### Observabilité, pannes et charge
+
+```bash
+docker compose --profile kafka --profile observability --profile chaos up -d --wait
+```
+
+Prometheus (http://localhost:9090) collecte les cinq services avec un jeton du client `prometheus` ; Grafana (http://localhost:3000, `admin` / `admin`) ouvre directement le tableau de bord FinFlow ; Jaeger (http://localhost:16686) montre les traces, y compris à travers Kafka. `scripts/lancer-services.sh` active l'export des traces si Jaeger tourne. Le tableau de bord se régénère par `python infrastructure/observability/generer-tableau-de-bord.py`.
+
+Panne du Ledger avec Toxiproxy (Payment est lancé derrière le proxy) :
+
+```bash
+LEDGER_SERVICE_URL=http://localhost:28084 scripts/lancer-services.sh start payment
+```
+
+```bash
+python scripts/chaos.py
+```
+
+Charge avec k6 (image Docker, aucune installation) :
+
+```bash
+docker run --rm -v "$PWD/load:/load" -e GATEWAY_URL=http://host.docker.internal:8080 -e KEYCLOAK_URL=http://host.docker.internal:8180 grafana/k6:2.4.0 run /load/paiements.js
+```
+
+Le quota par organisation de la Gateway (300 requêtes par minute par défaut) se relève pour la charge : `RATE_LIMIT_REQUESTS=1000000` au lancement de la Gateway. Sur un poste de 15 Go, Playwright devient instable si Grafana, Prometheus et Jaeger tournent pendant les tests : arrêtez-les avant (`docker compose stop grafana prometheus jaeger toxiproxy`). Sur le poste de développement, 20 paiements par seconde passent avec un p95 d'environ 120 ms ; à 30 par seconde, il dépasse la seconde.
+
 Le front est servi sur http://localhost:4200 (`alice` / `finflow-dev`). Les tests Playwright démarrent le front eux-mêmes et supposent la pile démarrée. `scripts/lancer-services.sh stop` arrête les services ; `E2E_PANNES=1` ajoute le parcours qui arrête le Ledger.
 
 | Service | Adresse |
@@ -177,6 +214,8 @@ Le front est servi sur http://localhost:4200 (`alice` / `finflow-dev`). Les test
 | Kafka (profil `kafka`) | `localhost:9094` |
 | Schema Registry (profil `kafka`) | http://localhost:8085 |
 | Front Angular | http://localhost:4200 |
+| Prometheus, Grafana, Jaeger (profil `observability`) | http://localhost:9090, http://localhost:3000, http://localhost:16686 |
+| Toxiproxy (profil `chaos`) | http://localhost:8474 (API), ports 28084 (Ledger) et 28082 (Account) |
 
 Comptes du realm local (mot de passe `finflow-dev`) :
 
@@ -187,7 +226,7 @@ Comptes du realm local (mot de passe `finflow-dev`) :
 | `bruno` | `tenant-admin` | Beta Logistique |
 | `clara` | `tenant-member` | Alpha Industries |
 
-Le client `payment-service` (`client_credentials`, rôle `service`, secret de développement) est le compte technique de la reprise des sagas. Le client `finflow-dev-cli`, qui délivre des jetons par mot de passe pour les scripts, n'existe que dans ce realm de développement. Le realm se régénère avec `python infrastructure/keycloak/generer-realm.py`.
+Le client `payment-service` (`client_credentials`, rôle `service`, secret de développement) est le compte technique de la reprise des sagas. Le client `prometheus` (`client_credentials`, rôle `metrics`) sert à la collecte des métriques. Le client `finflow-dev-cli`, qui délivre des jetons par mot de passe pour les scripts, n'existe que dans ce realm de développement. Le realm se régénère avec `python infrastructure/keycloak/generer-realm.py`.
 
 ## Mémoire et coûts
 

@@ -1,6 +1,8 @@
 # Pile locale de FinFlow (ADR-006).
 #   docker compose up -d                    PostgreSQL + Keycloak (~1,3 Go)
 #   docker compose --profile kafka up -d    + Kafka KRaft un nœud et Schema Registry (~1,3 Go)
+#   docker compose --profile observability up -d   + Prometheus, Grafana, Jaeger (~0,6 Go)
+#   docker compose --profile chaos up -d    + Toxiproxy (pannes réseau simulées, scripts/chaos.sh)
 # Les services se lancent depuis backend/ avec ./mvnw spring-boot:run (voir README).
 name: finflow
 
@@ -29,6 +31,10 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin_dev
+      # L'émetteur des jetons ne dépend pas de l'adresse utilisée pour joindre Keycloak : Prometheus
+      # (dans Docker) et les services (sur l'hôte) obtiennent des jetons du même émetteur (ADR-017).
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       JAVA_OPTS_KC_HEAP: "-Xms128m -Xmx512m"
     ports:
       - "8180:8180"
@@ -91,6 +97,67 @@ services:
       timeout: 5s
       retries: 20
     mem_limit: 512m
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    profiles: ["observability"]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+      # Reçoit aussi les mesures de k6 (load/README.md).
+      - --web.enable-remote-write-receiver
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./infrastructure/observability/prometheus:/etc/prometheus:ro
+    ports:
+      - "9090:9090"
+    mem_limit: 384m
+
+  grafana:
+    image: grafana/grafana:13.3.1
+    profiles: ["observability"]
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin_dev
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/finflow.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./infrastructure/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    mem_limit: 384m
+
+  jaeger:
+    image: jaegertracing/jaeger:2.23.0
+    profiles: ["observability"]
+    ports:
+      - "16686:16686"   # interface
+      - "4318:4318"     # OTLP HTTP : les services y envoient leurs traces
+    mem_limit: 384m
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.13.0
+    profiles: ["chaos"]
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./infrastructure/chaos:/config:ro
+    ports:
+      - "8474:8474"     # API de contrôle
+      - "28084:28084"   # proxy vers le Ledger
+      - "28082:28082"   # proxy vers Account
+    mem_limit: 64m
 
 volumes:
   postgres-data:

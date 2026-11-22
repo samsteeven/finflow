@@ -36,7 +36,9 @@ class SagaRecoveryIT extends PaymentIntegrationTest {
     private UUID b;
 
     @BeforeEach
-    void deux_comptes() {
+    void deux_comptes() throws Exception {
+        // Les sagas laissées par les autres classes finissent par être dues et prendraient la place du lot de reprise.
+        execute("delete from saga_watch");
         tenant = UUID.randomUUID();
         a = ACCOUNTS.add(tenant, "ACTIVE", 200_000, 1_000_000);
         b = ACCOUNTS.add(tenant, "ACTIVE", 200_000, 1_000_000);

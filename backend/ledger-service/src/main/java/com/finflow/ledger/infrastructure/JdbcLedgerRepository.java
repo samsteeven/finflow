@@ -37,7 +37,10 @@ class JdbcLedgerRepository implements LedgerRepository {
     private final Outbox outbox;
     private final Clock clock;
 
-    JdbcLedgerRepository(JdbcClient jdbc, Outbox outbox, Clock clock) {
+    private final io.micrometer.core.instrument.MeterRegistry meters;
+
+    JdbcLedgerRepository(JdbcClient jdbc, Outbox outbox, Clock clock, io.micrometer.core.instrument.MeterRegistry meters) {
+        this.meters = meters;
         this.jdbc = jdbc;
         this.outbox = outbox;
         this.clock = clock;
@@ -169,6 +172,14 @@ class JdbcLedgerRepository implements LedgerRepository {
                 .build();
         outbox.append(TOPIC, Envelopes.of(UUID.randomUUID(), "ledger-service", "TransactionPosted", posting.id(), 1,
                 tenant, null, null, clock.instant(), payload));
+        String kind = posting.kind().name();
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        meters.counter("finflow.ledger.postings", "kind", kind).increment();
+                    }
+                });
     }
 
     @Override

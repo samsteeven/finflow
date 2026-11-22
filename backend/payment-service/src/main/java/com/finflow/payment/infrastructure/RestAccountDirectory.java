@@ -26,8 +26,9 @@ import org.springframework.web.client.RestClientException;
 class RestAccountDirectory implements AccountDirectory {
 
     private final RestClient client;
+    private final com.finflow.platform.Resilience resilience;
 
-    RestAccountDirectory(RestClient.Builder builder,
+    RestAccountDirectory(RestClient.Builder builder, com.finflow.platform.Resilience resilience,
                          @Value("${finflow.accounts.base-url:http://localhost:8082}") String baseUrl,
                          @Value("${finflow.accounts.connect-timeout:1s}") Duration connectTimeout,
                          @Value("${finflow.accounts.read-timeout:2s}") Duration readTimeout) {
@@ -35,10 +36,22 @@ class RestAccountDirectory implements AccountDirectory {
                 HttpClient.newBuilder().connectTimeout(connectTimeout).build());
         factory.setReadTimeout(readTimeout);
         this.client = builder.baseUrl(baseUrl).requestFactory(factory).build();
+        this.resilience = resilience;
     }
 
     @Override
     public Optional<AccountView> find(UUID accountId) {
+        try {
+            return resilience.call("account", () -> fetch(accountId));
+        } catch (RuntimeException e) {
+            if (com.finflow.platform.Resilience.isRejection(e)) {
+                throw new AccountServiceUnavailableException("account-service écarté par la protection", e);
+            }
+            throw e;
+        }
+    }
+
+    private Optional<AccountView> fetch(UUID accountId) {
         try {
             return client.get()
                     .uri("/api/v1/accounts/{id}", accountId)

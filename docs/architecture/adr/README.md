@@ -18,3 +18,4 @@
 | [014](0014-consommateurs-idempotents.md) | Consommateurs idempotents, version d'agrégat et file morte | acceptée |
 | [015](0015-reprise-automatique-de-la-saga.md) | Reprise automatique de la saga par un compte de service | acceptée |
 | [016](0016-front-authentification-et-verite-des-donnees.md) | Front : jeton dans l'onglet, serveur seul source de vérité | acceptée |
+| [017](0017-observabilite-resilience-et-charge.md) | Observabilité, résilience des appels sortants et charge | acceptée |

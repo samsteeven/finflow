@@ -40,9 +40,12 @@ public class PaymentService {
     private final RiskCheck risk;
     private final TransactionTemplate tx;
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
     public PaymentService(PaymentEventStore store, PaymentQueries queries, AccountDirectory accounts,
-                          LedgerGateway ledger, RiskCheck risk, TransactionTemplate tx, Clock clock) {
+                          LedgerGateway ledger, RiskCheck risk, TransactionTemplate tx, Clock clock,
+                          io.micrometer.core.instrument.MeterRegistry meters) {
+        this.meters = meters;
         this.store = store;
         this.queries = queries;
         this.accounts = accounts;
@@ -85,6 +88,7 @@ public class PaymentService {
             }
             payment = get(existing.paymentId());
             replayed = true;
+            meters.counter("finflow.payment.idempotent.replays").increment();
         }
         if (payment.status() == PaymentStatus.VALIDATING) {
             payment = validate(payment.id(), correlationId);

@@ -2,6 +2,7 @@ package com.finflow.payment.infrastructure;
 
 import com.finflow.payment.application.LedgerGateway;
 import com.finflow.payment.application.ServiceTokenProvider;
+import com.finflow.platform.Resilience;
 import com.finflow.security.TenantContext;
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -27,8 +28,9 @@ class RestLedgerGateway implements LedgerGateway {
 
     private final RestClient client;
     private final ServiceTokenProvider serviceTokens;
+    private final Resilience resilience;
 
-    RestLedgerGateway(RestClient.Builder builder, ServiceTokenProvider serviceTokens,
+    RestLedgerGateway(RestClient.Builder builder, ServiceTokenProvider serviceTokens, Resilience resilience,
                       @Value("${finflow.ledger.base-url:http://localhost:8084}") String baseUrl,
                       @Value("${finflow.ledger.connect-timeout:1s}") Duration connectTimeout,
                       @Value("${finflow.ledger.read-timeout:3s}") Duration readTimeout) {
@@ -36,6 +38,7 @@ class RestLedgerGateway implements LedgerGateway {
                 HttpClient.newBuilder().connectTimeout(connectTimeout).build());
         factory.setReadTimeout(readTimeout);
         this.serviceTokens = serviceTokens;
+        this.resilience = resilience;
         this.client = builder.baseUrl(baseUrl).requestFactory(factory).build();
     }
 
@@ -59,7 +62,41 @@ class RestLedgerGateway implements LedgerGateway {
         return post("/internal/v1/ledger/reversals", body);
     }
 
+    /** Signale au coupe-circuit qu'un appel a échoué, tout en gardant l'issue pour l'appelant. */
+    private static final class CallFailed extends RuntimeException {
+        private final Outcome.Unavailable outcome;
+
+        CallFailed(Outcome.Unavailable outcome) {
+            super(outcome.reason(), null, false, false);
+            this.outcome = outcome;
+        }
+    }
+
+    /**
+     * Appel protégé par un coupe-circuit et une cloison (ADR-017). Un Ledger malade est vite écarté :
+     * le paiement reste {@code FAILED} et la saga le reprendra, au lieu d'attendre le délai de lecture à
+     * chaque requête. Pas de nouvel essai ici, la reprise de la saga est déjà bornée et persistée.
+     */
     private Outcome post(String path, Map<String, Object> body) {
+        try {
+            return resilience.call("ledger", () -> {
+                Outcome outcome = attempt(path, body);
+                if (outcome instanceof Outcome.Unavailable unavailable) {
+                    throw new CallFailed(unavailable);
+                }
+                return outcome;
+            });
+        } catch (CallFailed e) {
+            return e.outcome;
+        } catch (RuntimeException e) {
+            if (Resilience.isRejection(e)) {
+                return new Outcome.Unavailable("Ledger écarté par la protection : " + e.getClass().getSimpleName());
+            }
+            throw e;
+        }
+    }
+
+    private Outcome attempt(String path, Map<String, Object> body) {
         try {
             return client.post().uri(path)
                     .headers(this::authenticate)

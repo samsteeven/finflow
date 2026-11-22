@@ -22,6 +22,7 @@
     <module>shared/security-starter</module>
     <module>shared/test-support</module>
     <module>shared/messaging</module>
+    <module>shared/platform</module>
     <module>tenant-service</module>
     <module>account-service</module>
     <module>payment-service</module>
@@ -33,6 +34,7 @@
     <java.version>25</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring-cloud.version>2026.0.0</spring-cloud.version>
+    <resilience4j.version>2.4.0</resilience4j.version>
   </properties>
 
   <dependencyManagement>
@@ -43,6 +45,18 @@
         <version>${spring-cloud.version}</version>
         <type>pom</type>
         <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.github.resilience4j</groupId>
+        <artifactId>resilience4j-bom</artifactId>
+        <version>${resilience4j.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.finflow</groupId>
+        <artifactId>platform</artifactId>
+        <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.finflow</groupId>

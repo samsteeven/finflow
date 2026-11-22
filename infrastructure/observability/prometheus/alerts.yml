@@ -1,0 +1,56 @@
+# Règles d'alerte évaluées par Prometheus (visibles sur http://localhost:9090/alerts).
+# Chaque règle correspond à un mode de panne que le projet sait provoquer (scripts/chaos.sh, k6).
+groups:
+  - name: finflow
+    rules:
+      - alert: ServiceInjoignable
+        expr: up{job="finflow"} == 0
+        for: 20s
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.service }} ne répond plus à la collecte"
+
+      - alert: OutboxBloquee
+        expr: finflow_outbox_oldest_age_seconds > 60
+        for: 30s
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }} : un événement attend sa publication Kafka depuis plus d'une minute"
+
+      - alert: SagaBloquee
+        expr: finflow_saga_stuck > 0
+        for: 30s
+        labels: { severity: critical }
+        annotations:
+          summary: "Des paiements ont épuisé leurs reprises et attendent une décision humaine"
+
+      - alert: CoupeCircuitOuvert
+        expr: resilience4j_circuitbreaker_state{state="open"} == 1
+        for: 5s
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }} refuse d'appeler {{ $labels.name }} : coupe-circuit ouvert"
+
+      - alert: MessagesEnFileMorte
+        expr: increase(finflow_consumer_dead_letters_total[5m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }} a envoyé des messages en file morte"
+
+      - alert: TauxDErreursServeur
+        expr: |
+          sum by (application) (rate(http_server_requests_seconds_count{status=~"5..", uri!~"/actuator.*"}[1m]))
+            / sum by (application) (rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[1m])) > 0.05
+        for: 30s
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.application }} : plus de 5 % de réponses 5xx"
+
+      - alert: LatenceElevee
+        expr: |
+          histogram_quantile(0.95, sum by (le, application)
+            (rate(http_server_requests_seconds_bucket{uri!~"/actuator.*"}[1m]))) > 1
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.application }} : 95 % des requêtes dépassent une seconde"

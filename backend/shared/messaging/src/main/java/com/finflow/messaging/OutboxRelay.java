@@ -44,10 +44,20 @@ public class OutboxRelay implements SmartLifecycle {
         this.settings = settings;
     }
 
-    private record Row(long id, String topic, String key, String payload) {
+    private record Row(long id, String topic, String key, String payload, String traceContext) {
     }
 
     /** Publie un lot ; renvoie le nombre d'événements publiés. */
+    private io.micrometer.core.instrument.Counter publishedCounter;
+    private io.micrometer.core.instrument.Counter failedCounter;
+
+    /** Branche les compteurs de publication ; sans registre, le relais ne mesure rien. */
+    public OutboxRelay instrument(io.micrometer.core.instrument.MeterRegistry registry) {
+        publishedCounter = registry.counter("finflow.outbox.published");
+        failedCounter = registry.counter("finflow.outbox.failures");
+        return this;
+    }
+
     public int publishPending() {
         Integer published = tx.execute(status -> {
             Boolean locked = jdbc.queryForObject("select pg_try_advisory_xact_lock(?)", Boolean.class, LOCK_KEY);
@@ -55,9 +65,9 @@ public class OutboxRelay implements SmartLifecycle {
                 return 0;
             }
             List<Row> batch = jdbc.query("""
-                    select id, topic, message_key, payload from outbox
+                    select id, topic, message_key, payload, trace_context from outbox
                      where published_at is null order by id limit ?
-                    """, (rs, n) -> new Row(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4)),
+                    """, (rs, n) -> new Row(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5)),
                     settings.batchSize());
             if (!batch.isEmpty() && !topicsReady) {
                 try {
@@ -72,7 +82,15 @@ public class OutboxRelay implements SmartLifecycle {
             int done = 0;
             for (Row row : batch) {
                 try {
-                    kafka.send(row.topic(), row.key(), AvroJson.read(row.payload()))
+                    org.apache.kafka.clients.producer.ProducerRecord<String, EventEnvelope> record =
+                            new org.apache.kafka.clients.producer.ProducerRecord<>(row.topic(), row.key(),
+                                    AvroJson.read(row.payload()));
+                    if (row.traceContext() != null) {
+                        // La trace de la requête d'origine se poursuit chez le consommateur.
+                        record.headers().add("traceparent", row.traceContext().getBytes(
+                                java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                    kafka.send(record)
                             .get(settings.sendTimeout().toMillis(), TimeUnit.MILLISECONDS);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -81,10 +99,16 @@ public class OutboxRelay implements SmartLifecycle {
                     log.warn("Publication de l'événement outbox {} impossible : {}", row.id(), e.toString());
                     jdbc.update("update outbox set attempts = attempts + 1, last_error = ? where id = ?",
                             truncate(e.toString()), row.id());
+                    if (failedCounter != null) {
+                        failedCounter.increment();
+                    }
                     break;
                 }
                 jdbc.update("update outbox set published_at = now() where id = ?", row.id());
                 done++;
+                if (publishedCounter != null) {
+                    publishedCounter.increment();
+                }
             }
             return done;
         });

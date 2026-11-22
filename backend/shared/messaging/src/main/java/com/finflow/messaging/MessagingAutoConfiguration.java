@@ -5,6 +5,7 @@ import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig;
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
 import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import io.confluent.kafka.serializers.KafkaAvroSerializer;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -45,14 +46,34 @@ public class MessagingAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    Outbox outbox(JdbcTemplate jdbc) {
-        return new Outbox(jdbc);
+    Outbox outbox(JdbcTemplate jdbc, org.springframework.beans.factory.ObjectProvider<io.micrometer.tracing.Tracer> tracer) {
+        return new Outbox(jdbc, () -> currentTraceparent(tracer.getIfAvailable()));
+    }
+
+    /** Contexte de trace courant au format W3C {@code traceparent}, ou null hors d'une trace échantillonnée. */
+    static String currentTraceparent(io.micrometer.tracing.Tracer tracer) {
+        if (tracer == null || tracer.currentSpan() == null) {
+            return null;
+        }
+        io.micrometer.tracing.TraceContext context = tracer.currentSpan().context();
+        if (Boolean.FALSE.equals(context.sampled())) {
+            return null;
+        }
+        return "00-" + context.traceId() + "-" + context.spanId() + "-01";
     }
 
     @Bean
     @ConditionalOnMissingBean
-    Inbox inbox(JdbcTemplate jdbc) {
-        return new Inbox(jdbc);
+    Inbox inbox(JdbcTemplate jdbc, org.springframework.beans.factory.ObjectProvider<MeterRegistry> meters) {
+        Inbox inbox = new Inbox(jdbc);
+        meters.ifAvailable(inbox::instrument);
+        return inbox;
+    }
+
+    /** Jauges de l'outbox : le nombre d'événements en attente et l'âge du plus ancien (alerte si Kafka tombe). */
+    @Bean
+    OutboxMetrics outboxMetrics(JdbcTemplate jdbc) {
+        return new OutboxMetrics(jdbc);
     }
 
     private static KafkaAdmin admin(MessagingProperties properties) {
@@ -88,10 +109,13 @@ public class MessagingAutoConfiguration {
     @ConditionalOnProperty(name = "finflow.messaging.relay.enabled", havingValue = "true")
     OutboxRelay outboxRelay(JdbcTemplate jdbc, TransactionTemplate tx,
                             ProducerFactory<String, EventEnvelope> outboxProducerFactory,
-                            MessagingProperties properties) {
+                            MessagingProperties properties,
+                            org.springframework.beans.factory.ObjectProvider<MeterRegistry> meters) {
         KafkaAdmin admin = admin(properties);
-        return new OutboxRelay(jdbc, tx, new KafkaTemplate<>(outboxProducerFactory), properties.relay(),
+        OutboxRelay relay = new OutboxRelay(jdbc, tx, new KafkaTemplate<>(outboxProducerFactory), properties.relay(),
                 () -> admin.createOrModifyTopics(Topics.all().toArray(new org.apache.kafka.clients.admin.NewTopic[0])));
+        meters.ifAvailable(relay::instrument);
+        return relay;
     }
 
     @EnableKafka
@@ -101,7 +125,8 @@ public class MessagingAutoConfiguration {
 
         @Bean
         ConcurrentKafkaListenerContainerFactory<String, EventEnvelope> kafkaListenerContainerFactory(
-                MessagingProperties properties, @Value("${spring.application.name}") String groupId) {
+                MessagingProperties properties, @Value("${spring.application.name}") String groupId,
+                org.springframework.beans.factory.ObjectProvider<MeterRegistry> meters) {
             Map<String, Object> config = new HashMap<>();
             config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, properties.bootstrapServers());
             config.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
@@ -117,11 +142,13 @@ public class MessagingAutoConfiguration {
             ConcurrentKafkaListenerContainerFactory<String, EventEnvelope> factory =
                     new ConcurrentKafkaListenerContainerFactory<>();
             factory.setConsumerFactory(new DefaultKafkaConsumerFactory<>(config));
-            factory.setCommonErrorHandler(errorHandler(properties));
+            factory.setCommonErrorHandler(errorHandler(properties, meters.getIfAvailable()));
+            // Chaque message traité devient un span rattaché à la trace de la requête d'origine (en-tête traceparent).
+            factory.getContainerProperties().setObservationEnabled(true);
             return factory;
         }
 
-        private static DefaultErrorHandler errorHandler(MessagingProperties properties) {
+        private static DefaultErrorHandler errorHandler(MessagingProperties properties, MeterRegistry meters) {
             Map<String, Object> config = new HashMap<>();
             config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, properties.bootstrapServers());
             config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
@@ -137,7 +164,12 @@ public class MessagingAutoConfiguration {
                     new StringSerializer(), new DelegatingByTypeSerializer(serializers));
             DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                     new KafkaTemplate<>(producers),
-                    (record, error) -> new TopicPartition(Topics.deadLetter(record.topic()), -1));
+                    (record, error) -> {
+                        if (meters != null) {
+                            meters.counter("finflow.consumer.dead.letters", "topic", record.topic()).increment();
+                        }
+                        return new TopicPartition(Topics.deadLetter(record.topic()), -1);
+                    });
             DefaultErrorHandler handler = new DefaultErrorHandler(recoverer,
                     new FixedBackOff(properties.consumer().retryInterval().toMillis(),
                             properties.consumer().maxRetries()));

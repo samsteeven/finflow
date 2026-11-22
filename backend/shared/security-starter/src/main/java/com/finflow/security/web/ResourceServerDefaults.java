@@ -16,6 +16,8 @@ public final class ResourceServerDefaults {
     public static HttpSecurity apply(HttpSecurity http) throws Exception {
         return http.authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
+                        // Métriques : seul le compte technique de Prometheus les lit (rôle metrics).
+                        .requestMatchers("/actuator/prometheus").hasRole("METRICS")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt ->
                         jwt.jwtAuthenticationConverter(new KeycloakJwtAuthenticationConverter())))
