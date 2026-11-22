@@ -150,8 +150,8 @@ resource "aws_lb_listener_rule" "keycloak" {
 # Chiffrement par clé gérée par AWS (SSE-S3) : une clé KMS dédiée (≈ 1 $/mois) n'apporte rien à des fichiers
 # publics par nature.
 # Pas de versions : le contenu est reconstruit à chaque déploiement depuis la CI.
-#trivy:ignore:AWS-0132
 #trivy:ignore:AWS-0090
+#trivy:ignore:AWS-0132
 resource "aws_s3_bucket" "web" {
   bucket        = "${local.name}-web-${data.aws_caller_identity.current.account_id}"
   force_destroy = true

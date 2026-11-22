@@ -80,7 +80,7 @@ jobs:
           git diff --exit-code -- infrastructure/aws/keycloak/finflow-realm-cloud.json infrastructure/keycloak/finflow-realm.json
       - name: Analyse de la configuration (défauts moyens et plus bloquants)
         run: |
-          docker run --rm -v "$PWD/infrastructure/aws:/work:ro" aquasec/trivy:0.76.1 config             --severity MEDIUM,HIGH,CRITICAL --exit-code 1 --no-progress /work
+          docker run --rm -v "$PWD/infrastructure/aws:/work:ro" aquasec/trivy:0.76.1 config             --severity MEDIUM,HIGH,CRITICAL --exit-code 1 /work
 
   pile:
     name: Pile locale et parcours Playwright (Keycloak, Kafka, services, front)

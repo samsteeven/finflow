@@ -86,6 +86,8 @@ Resources:
                       - elasticloadbalancing.amazonaws.com
 
   # Chiffrement SSE-S3 (clé gérée par AWS) ; accès limité au rôle et au compte, TLS obligatoire.
+  # Clé gérée par AWS (SSE-S3) : une clé dédiée coûte plus que l'enjeu pour un état de démonstration.
+  #trivy:ignore:AWS-0132
   TerraformStateBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
