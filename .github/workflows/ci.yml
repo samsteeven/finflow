@@ -104,6 +104,9 @@ jobs:
           # Outbox, consommateurs et reprise automatique des sagas (incrément 4).
           MESSAGING_ENABLED: "true"
           SAGA_RECOVERY_ENABLED: "true"
+          # Les parcours Playwright dépassent le quota par organisation par défaut (300 requêtes par minute, HTTP 429) :
+          # chaque liste lit un solde par compte. Le quota lui-même est testé par RateLimitTest.
+          RATE_LIMIT_REQUESTS: "6000"
         run: |
           mkdir -p logs
           SPRING_PROFILES_ACTIVE=demo nohup java -Xmx256m -jar backend/tenant-service/target/tenant-service-*.jar > logs/tenant.log 2>&1 &
