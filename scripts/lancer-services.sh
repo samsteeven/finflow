@@ -11,6 +11,9 @@ racine="$(cd "$(dirname "$0")/.." && pwd)"
 logs="$racine/.logs"
 java="${JAVA:-java}"
 export MESSAGING_ENABLED=true SAGA_RECOVERY_ENABLED=true
+# Quota par organisation relevé pour les parcours Playwright : chaque chargement de liste lit un solde par compte et la
+# suite dépasse les 300 requêtes/minute par défaut (HTTP 429, constaté en CI). Le quota lui-même est testé par RateLimitTest.
+export RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-6000}
 # Les traces ne partent vers Jaeger que s'il tourne (docker compose --profile observability) : sans lui,
 # chaque envoi échouerait et remplirait les journaux.
 if curl -sf -o /dev/null "http://localhost:16686"; then
