@@ -67,7 +67,7 @@ jobs:
         with:
           terraform_version: 1.16.6
           terraform_wrapper: false
-      - name: Terraform : format et validité
+      - name: "Terraform, format et validité"
         working-directory: infrastructure/aws/terraform
         run: |
           terraform fmt -check -recursive
