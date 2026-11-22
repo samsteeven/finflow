@@ -2,11 +2,22 @@
 
 Le fichier JSON est versionné ; ce script n'existe que pour éviter d'écrire à la main la
 configuration du profil utilisateur, qui est une chaîne JSON imbriquée dans le JSON du realm.
-Usage : python infrastructure/keycloak/generer-realm.py
+Usage : python infrastructure/keycloak/generer-realm.py          realm de développement (finflow-realm.json)
+        python infrastructure/keycloak/generer-realm.py --cloud  realm AWS (infrastructure/aws/keycloak/finflow-realm-cloud.json, ADR-018)
+
+Le realm AWS n'a ni client de scripts locaux, ni client Prometheus, ni mot de passe ou adresse écrits en dur :
+Keycloak remplace au démarrage les ${VARIABLES} d'environnement du fichier importé (FINFLOW_PUBLIC_URL,
+PAYMENT_CLIENT_SECRET, DEMO_PASSWORD), fournies par Terraform et Secrets Manager.
 """
 
 import json
+import sys
 from pathlib import Path
+
+CLOUD = "--cloud" in sys.argv
+WEB_URL = "${FINFLOW_PUBLIC_URL}" if CLOUD else "http://localhost:4200"
+DEMO_PASSWORD = "${DEMO_PASSWORD}" if CLOUD else "finflow-dev"
+PAYMENT_SECRET = "${PAYMENT_CLIENT_SECRET}" if CLOUD else "payment-service-dev-secret"
 
 ALPHA = "a1a1a1a1-0000-4000-8000-000000000001"
 BETA = "b2b2b2b2-0000-4000-8000-000000000002"
@@ -58,7 +69,7 @@ def user(username, first, last, roles, tenant=None):
     return {"username": username, "email": f"{username}@finflow.test", "emailVerified": True,
             "firstName": first, "lastName": last, "enabled": True, "attributes": attributes,
             "realmRoles": ["default-roles-finflow", *roles],
-            "credentials": [{"type": "password", "value": "finflow-dev", "temporary": False}]}
+            "credentials": [{"type": "password", "value": DEMO_PASSWORD, "temporary": False}]}
 
 
 realm = {
@@ -87,9 +98,9 @@ realm = {
             "clientId": "finflow-web", "name": "FinFlow (front)", "enabled": True, "publicClient": True,
             "protocol": "openid-connect", "standardFlowEnabled": True, "implicitFlowEnabled": False,
             "directAccessGrantsEnabled": False, "serviceAccountsEnabled": False,
-            "redirectUris": ["http://localhost:4200/*"], "webOrigins": ["http://localhost:4200"],
+            "redirectUris": [WEB_URL + "/*"], "webOrigins": [WEB_URL],
             "attributes": {"pkce.code.challenge.method": "S256",
-                           "post.logout.redirect.uris": "http://localhost:4200/*"},
+                           "post.logout.redirect.uris": WEB_URL + "/*"},
             "protocolMappers": mappers(),
         },
         {
@@ -105,7 +116,7 @@ realm = {
             # sert qu'à reprendre une saga hors d'une requête utilisateur (ADR-015). Le secret
             # ci-dessous est un secret de développement ; en production il vient d'un coffre.
             "clientId": "payment-service", "name": "FinFlow (payment-service)", "enabled": True,
-            "publicClient": False, "secret": "payment-service-dev-secret", "protocol": "openid-connect",
+            "publicClient": False, "secret": PAYMENT_SECRET, "protocol": "openid-connect",
             "standardFlowEnabled": False, "implicitFlowEnabled": False, "directAccessGrantsEnabled": False,
             "serviceAccountsEnabled": True,
             "protocolMappers": mappers(),
@@ -137,6 +148,12 @@ realm = {
     },
 }
 
-target = Path(__file__).with_name("finflow-realm.json")
+if CLOUD:
+    # Ni les scripts locaux (mot de passe direct), ni Prometheus (pas de supervision Prometheus sur AWS).
+    realm["clients"] = [c for c in realm["clients"] if c["clientId"] not in ("finflow-dev-cli", "prometheus")]
+    realm["users"] = [u for u in realm["users"] if u["username"] != "service-account-prometheus"]
+
+# Le realm AWS vit à part : le répertoire de ce script est monté tel quel dans Keycloak en local (docker-compose).
+target = (Path(__file__).parent.parent / "aws" / "keycloak" / "finflow-realm-cloud.json") if CLOUD     else Path(__file__).with_name("finflow-realm.json")
 target.write_text(json.dumps(realm, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 print(f"écrit : {target}")

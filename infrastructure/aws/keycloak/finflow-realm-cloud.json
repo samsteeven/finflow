@@ -1,0 +1,251 @@
+{
+  "realm": "finflow",
+  "displayName": "FinFlow",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "internationalizationEnabled": true,
+  "supportedLocales": [
+    "fr",
+    "en"
+  ],
+  "defaultLocale": "fr",
+  "roles": {
+    "realm": [
+      {
+        "name": "platform-admin",
+        "description": "Administre la plateforme : crée les organisations"
+      },
+      {
+        "name": "tenant-admin",
+        "description": "Administre son organisation"
+      },
+      {
+        "name": "tenant-member",
+        "description": "Membre d'une organisation"
+      },
+      {
+        "name": "service",
+        "description": "Compte technique d'un service (reprise des sagas, ADR-015)"
+      },
+      {
+        "name": "metrics",
+        "description": "Lecture des métriques Prometheus (ADR-017)"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "finflow-web",
+      "name": "FinFlow (front)",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "${FINFLOW_PUBLIC_URL}/*"
+      ],
+      "webOrigins": [
+        "${FINFLOW_PUBLIC_URL}"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${FINFLOW_PUBLIC_URL}/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience finflow-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "finflow-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "payment-service",
+      "name": "FinFlow (payment-service)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${PAYMENT_CLIENT_SECRET}",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "audience finflow-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "finflow-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-payment-service",
+      "enabled": true,
+      "serviceAccountClientId": "payment-service",
+      "realmRoles": [
+        "service"
+      ]
+    },
+    {
+      "username": "plateforme",
+      "email": "plateforme@finflow.test",
+      "emailVerified": true,
+      "firstName": "Paula",
+      "lastName": "Plateforme",
+      "enabled": true,
+      "attributes": {},
+      "realmRoles": [
+        "default-roles-finflow",
+        "platform-admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "alice",
+      "email": "alice@finflow.test",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Alpha",
+      "enabled": true,
+      "attributes": {
+        "tenant_id": [
+          "a1a1a1a1-0000-4000-8000-000000000001"
+        ]
+      },
+      "realmRoles": [
+        "default-roles-finflow",
+        "tenant-admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "bruno",
+      "email": "bruno@finflow.test",
+      "emailVerified": true,
+      "firstName": "Bruno",
+      "lastName": "Beta",
+      "enabled": true,
+      "attributes": {
+        "tenant_id": [
+          "b2b2b2b2-0000-4000-8000-000000000002"
+        ]
+      },
+      "realmRoles": [
+        "default-roles-finflow",
+        "tenant-admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "clara",
+      "email": "clara@finflow.test",
+      "emailVerified": true,
+      "firstName": "Clara",
+      "lastName": "Alpha",
+      "enabled": true,
+      "attributes": {
+        "tenant_id": [
+          "a1a1a1a1-0000-4000-8000-000000000001"
+        ]
+      },
+      "realmRoles": [
+        "default-roles-finflow",
+        "tenant-member"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${DEMO_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"multivalued\": false, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"validations\": {\"length\": {\"min\": 3, \"max\": 255}, \"username-prohibited-characters\": {}, \"up-username-not-idn-homograph\": {}}}, {\"name\": \"email\", \"displayName\": \"${email}\", \"multivalued\": false, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"required\": {\"roles\": [\"user\"]}, \"validations\": {\"email\": {}, \"length\": {\"max\": 255}}}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"multivalued\": false, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"required\": {\"roles\": [\"user\"]}, \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"multivalued\": false, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"required\": {\"roles\": [\"user\"]}, \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}}, {\"name\": \"tenant_id\", \"displayName\": \"Organisation (identifiant du tenant)\", \"multivalued\": false, \"permissions\": {\"view\": [\"admin\"], \"edit\": [\"admin\"]}, \"validations\": {\"pattern\": {\"pattern\": \"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\", \"error-message\": \"Un UUID est attendu\"}}}], \"groups\": [{\"name\": \"user-metadata\", \"displayHeader\": \"User metadata\", \"displayDescription\": \"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  }
+}

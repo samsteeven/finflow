@@ -4,7 +4,7 @@ Plateforme B2B multi-tenant de **simulation** d'opérations financières : compt
 
 Le sujet du projet est la **cohérence financière dans un système distribué** : pannes, messages dupliqués, traitements concurrents et opérations asynchrones ne doivent jamais produire de double débit ni d'écriture déséquilibrée. La cible complète (event sourcing, saga, outbox, Kafka, partie double) est décrite dans [docs/architecture/vision.md](docs/architecture/vision.md), et les décisions dans les [ADR](docs/architecture/adr/README.md).
 
-## État : incréments 1 à 6, fondations, comptes, paiements, grand livre, Kafka, front et production
+## État : incréments 1 à 7, fondations, comptes, paiements, grand livre, Kafka, front, production et AWS
 
 | Élément | Contenu |
 |---|---|
@@ -27,9 +27,10 @@ Le sujet du projet est la **cohérence financière dans un système distribué**
 | Isolation | RLS PostgreSQL **forcée**, rôle applicatif sans `BYPASSRLS` ni droit de suppression, refus par défaut sans contexte ([ADR-005](docs/architecture/adr/0005-rls-et-contexte-par-transaction.md)) |
 | Keycloak | Realm `finflow` importé au démarrage : client `finflow-web` (PKCE S256), audience `finflow-api`, attribut `tenant_id` modifiable par un administrateur seulement ([ADR-004](docs/architecture/adr/0004-keycloak-et-tenant-dans-le-jeton.md)) |
 | Docker Compose | PostgreSQL 18 (une base et deux rôles par service), Keycloak 26, Kafka 4 KRaft à un nœud et Schema Registry (profil `kafka`) ([ADR-006](docs/architecture/adr/0006-pile-locale-sobre-en-memoire.md)) |
+| AWS (incrément 7) | Images Docker (non root, lecture seule, empreinte de base épinglée), Terraform (ECS Fargate, RDS, EFS, CloudFront, Cloud Map, Secrets Manager), amorçage CloudFormation, workflows de déploiement et de destruction **manuels** ; validé et répété en local, **jamais appliqué sur AWS** ([ADR-018](docs/architecture/adr/0018-deploiement-aws.md), [guide](docs/exploitation/aws.md)) |
 | CI | Tests unitaires et d'intégration (Testcontainers), compilation et tests du front, puis vérification de la pile avec de vrais jetons Keycloak et parcours Playwright |
 
-Payment orchestre désormais la comptabilisation, en synchrone : un paiement validé est confié au Ledger et finit `COMPLETED`, `REJECTED` (fonds insuffisants) ou `FAILED` (Ledger indisponible, repris par un rejeu de la même `Idempotency-Key` sans double écriture). Un paiement terminé se rembourse par contrepassation (`POST /api/v1/payments/{id}/refunds`). Depuis l'incrément 4, Payment et le Ledger écrivent leurs événements dans une **outbox** (même transaction que le changement), un relais les publie sur Kafka, Account les projette, et un paiement resté en suspens (Ledger arrêté, réponse perdue) est **repris automatiquement**, sans double écriture. Kafka peut s'arrêter : les services continuent, les événements partent à son retour. Le front Angular (incrément 5) montre tout cela à l'écran ; l'observabilité et AWS viennent ensuite (voir la [feuille de route](docs/architecture/vision.md#feuille-de-route)).
+Payment orchestre désormais la comptabilisation, en synchrone : un paiement validé est confié au Ledger et finit `COMPLETED`, `REJECTED` (fonds insuffisants) ou `FAILED` (Ledger indisponible, repris par un rejeu de la même `Idempotency-Key` sans double écriture). Un paiement terminé se rembourse par contrepassation (`POST /api/v1/payments/{id}/refunds`). Depuis l'incrément 4, Payment et le Ledger écrivent leurs événements dans une **outbox** (même transaction que le changement), un relais les publie sur Kafka, Account les projette, et un paiement resté en suspens (Ledger arrêté, réponse perdue) est **repris automatiquement**, sans double écriture. Kafka peut s'arrêter : les services continuent, les événements partent à son retour. Le front Angular (incrément 5) montre tout cela à l'écran ; l'observabilité (incrément 6) et l'infrastructure AWS (incrément 7, écrite et répétée en local, non déployée) complètent le tout (voir la [feuille de route](docs/architecture/vision.md#feuille-de-route)).
 
 ## Ce que les tests vérifient
 
@@ -228,6 +229,17 @@ Comptes du realm local (mot de passe `finflow-dev`) :
 
 Le client `payment-service` (`client_credentials`, rôle `service`, secret de développement) est le compte technique de la reprise des sagas. Le client `prometheus` (`client_credentials`, rôle `metrics`) sert à la collecte des métriques. Le client `finflow-dev-cli`, qui délivre des jetons par mot de passe pour les scripts, n'existe que dans ce realm de développement. Le realm se régénère avec `python infrastructure/keycloak/generer-realm.py`.
 
+## AWS
+
+L'infrastructure de démonstration (ADR-018) se répète en local sans rien créer chez AWS :
+
+```bash
+cd backend && ./mvnw -DskipTests package && cd ..
+scripts/repetition-aws.sh      # mêmes images et même configuration que les tâches ECS ; ≈ 5 min, ≈ 6 Go
+```
+
+Elle construit les sept images, initialise les bases comme la tâche ponctuelle de Terraform, démarre Keycloak, Kafka, le registre et les cinq services avec les contraintes d'ECS (non root, lecture seule, 1 Go), puis vérifie migrations, isolation entre bases, jeton accepté par la Gateway et topics. Le déploiement réel (≈ 0,41 $ par heure, détruit après usage) ne se lance que sur accord explicite : [docs/exploitation/aws.md](docs/exploitation/aws.md).
+
 ## Mémoire et coûts
 
-Le poste de développement a 15 Go de RAM. La pile de l'incrément 1 (PostgreSQL, Keycloak, Kafka, Gateway, tenant-service) occupait environ 1,4 Go ; chaque service Spring Boot ajoute environ 250 Mo, avec des heap JVM bornées. Kafka n'est lancé qu'avec le profil `kafka`. Rien n'est créé sur AWS sans accord explicite, après chiffrage : MSK et RDS coûtent cher même au repos.
+Le poste de développement a 15 Go de RAM. La pile de l'incrément 1 (PostgreSQL, Keycloak, Kafka, Gateway, tenant-service) occupait environ 1,4 Go ; chaque service Spring Boot ajoute environ 250 Mo, avec des heap JVM bornées. Kafka n'est lancé qu'avec le profil `kafka`. Rien n'est créé sur AWS sans accord explicite, après chiffrage (≈ 0,41 $ par heure d'environnement allumé, ADR-018) : RDS, le répartiteur et les adresses publiques coûtent même au repos, et MSK a été écarté pour cette raison.

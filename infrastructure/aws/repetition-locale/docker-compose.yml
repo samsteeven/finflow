@@ -1,0 +1,208 @@
+# Répétition générale locale de l'environnement AWS (ADR-018) : les MÊMES images, la même initialisation des bases et
+# les mêmes variables d'environnement que les définitions de tâches ECS (terraform/compute.tf), avec les mêmes noms DNS
+# internes (alias *.finflow.internal). Seules les adresses publiques changent (http://localhost au lieu de CloudFront).
+# Elle détecte avant tout déploiement une variable oubliée, un mot de passe mal transmis ou un service qui ne démarre
+# pas sous un utilisateur non root, un système de fichiers en lecture seule et 1 Go de mémoire.
+#
+#   scripts/repetition-aws.sh        construit les images, lance cette pile, vérifie, puis l'arrête
+#
+# Les mots de passe sont de l'essai : ils n'ont rien à voir avec ceux générés par Terraform.
+name: finflow-aws
+
+x-service: &service
+  restart: "no"
+  read_only: true
+  tmpfs: ["/tmp"]
+  mem_limit: 1g
+  depends_on: &service-deps
+    init-bases:
+      condition: service_completed_successfully
+    keycloak:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+    schema-registry:
+      condition: service_healthy
+
+x-oidc: &oidc
+  KEYCLOAK_ISSUER: http://keycloak.finflow.internal:8180/auth/realms/finflow
+  KEYCLOAK_JWKS: http://keycloak.finflow.internal:8180/auth/realms/finflow/protocol/openid-connect/certs
+
+x-messaging: &messaging
+  KAFKA_BOOTSTRAP: kafka.finflow.internal:9092
+  SCHEMA_REGISTRY_URL: http://schema-registry.finflow.internal:8085
+  MESSAGING_ENABLED: "true"
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_PASSWORD: admin_essai
+    volumes:
+      - ./creer-administrateur.sql:/docker-entrypoint-initdb.d/01-administrateur.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finflow -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Même image que la tâche ponctuelle lancée par Terraform.
+  init-bases:
+    image: finflow/init-bases:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: finflow
+      PGPASSWORD: administrateur_essai
+      TENANT_OWNER_PASSWORD: essai-t-o
+      TENANT_APP_PASSWORD: essai-t-a
+      ACCOUNT_OWNER_PASSWORD: essai-a-o
+      ACCOUNT_APP_PASSWORD: essai-a-a
+      PAYMENT_OWNER_PASSWORD: essai-p-o
+      PAYMENT_APP_PASSWORD: essai-p-a
+      LEDGER_OWNER_PASSWORD: essai-l-o
+      LEDGER_APP_PASSWORD: essai-l-a
+      KEYCLOAK_PASSWORD: essai-kc
+
+  kafka:
+    image: apache/kafka:4.3.2
+    networks:
+      default:
+        aliases: [kafka.finflow.internal]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka.finflow.internal:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    mem_limit: 1g
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.1.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [schema-registry.finflow.internal]
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry.finflow.internal
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka.finflow.internal:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8085
+      KAFKA_HEAP_OPTS: "-Xms64m -Xmx256m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8085/subjects > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 512m
+
+  keycloak:
+    image: finflow/keycloak:local
+    depends_on:
+      init-bases:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases: [keycloak.finflow.internal]
+    environment:
+      KC_DB_URL: jdbc:postgresql://postgres:5432/finflow_keycloak
+      KC_DB_USERNAME: finflow_keycloak
+      KC_DB_PASSWORD: essai-kc
+      KC_HOSTNAME: http://keycloak.finflow.internal:8180/auth
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: administrateur-essai-keycloak
+      FINFLOW_PUBLIC_URL: http://localhost:4200
+      PAYMENT_CLIENT_SECRET: secret-de-paiement-essai
+      DEMO_PASSWORD: mot-de-passe-demo-essai
+    ports:
+      - "18180:8180"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    mem_limit: 1500m
+
+  tenant-service:
+    <<: *service
+    image: finflow/tenant-service:local
+    networks:
+      default:
+        aliases: [tenant-service.finflow.internal]
+    environment:
+      <<: *oidc
+      TENANT_DB_URL: jdbc:postgresql://postgres:5432/finflow_tenant
+      TENANT_DB_APP_PASSWORD: essai-t-a
+      TENANT_DB_OWNER_PASSWORD: essai-t-o
+
+  account-service:
+    <<: *service
+    image: finflow/account-service:local
+    networks:
+      default:
+        aliases: [account-service.finflow.internal]
+    environment:
+      <<: [*oidc, *messaging]
+      ACCOUNT_DB_URL: jdbc:postgresql://postgres:5432/finflow_account
+      ACCOUNT_DB_APP_PASSWORD: essai-a-a
+      ACCOUNT_DB_OWNER_PASSWORD: essai-a-o
+
+  ledger-service:
+    <<: *service
+    image: finflow/ledger-service:local
+    networks:
+      default:
+        aliases: [ledger-service.finflow.internal]
+    environment:
+      <<: [*oidc, *messaging]
+      LEDGER_DB_URL: jdbc:postgresql://postgres:5432/finflow_ledger
+      LEDGER_DB_APP_PASSWORD: essai-l-a
+      LEDGER_DB_OWNER_PASSWORD: essai-l-o
+      ACCOUNT_SERVICE_URL: http://account-service.finflow.internal:8082
+
+  payment-service:
+    <<: *service
+    image: finflow/payment-service:local
+    networks:
+      default:
+        aliases: [payment-service.finflow.internal]
+    environment:
+      <<: [*oidc, *messaging]
+      PAYMENT_DB_URL: jdbc:postgresql://postgres:5432/finflow_payment
+      PAYMENT_DB_APP_PASSWORD: essai-p-a
+      PAYMENT_DB_OWNER_PASSWORD: essai-p-o
+      ACCOUNT_SERVICE_URL: http://account-service.finflow.internal:8082
+      LEDGER_SERVICE_URL: http://ledger-service.finflow.internal:8084
+      KEYCLOAK_TOKEN_URI: http://keycloak.finflow.internal:8180/auth/realms/finflow/protocol/openid-connect/token
+      PAYMENT_CLIENT_SECRET: secret-de-paiement-essai
+      SAGA_RECOVERY_ENABLED: "true"
+
+  api-gateway:
+    <<: *service
+    image: finflow/api-gateway:local
+    environment:
+      <<: *oidc
+      TENANT_SERVICE_URL: http://tenant-service.finflow.internal:8081
+      ACCOUNT_SERVICE_URL: http://account-service.finflow.internal:8082
+      PAYMENT_SERVICE_URL: http://payment-service.finflow.internal:8083
+      LEDGER_SERVICE_URL: http://ledger-service.finflow.internal:8084
+      CORS_ALLOWED_ORIGINS: http://localhost:4200
+    ports:
+      - "18081:8080"

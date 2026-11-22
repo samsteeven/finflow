@@ -19,3 +19,4 @@
 | [015](0015-reprise-automatique-de-la-saga.md) | Reprise automatique de la saga par un compte de service | acceptée |
 | [016](0016-front-authentification-et-verite-des-donnees.md) | Front : jeton dans l'onglet, serveur seul source de vérité | acceptée |
 | [017](0017-observabilite-resilience-et-charge.md) | Observabilité, résilience des appels sortants et charge | acceptée |
+| [018](0018-deploiement-aws.md) | Déploiement sur AWS, au plus juste, détruit après usage | acceptée |

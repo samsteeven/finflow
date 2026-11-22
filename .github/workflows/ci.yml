@@ -57,6 +57,31 @@ jobs:
       - name: Tests unitaires
         run: npx ng test --watch=false
 
+  infrastructure:
+    name: Infrastructure AWS (validation, sans rien créer)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - name: Terraform : format et validité
+        working-directory: infrastructure/aws/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+      - name: Le realm Keycloak AWS est à jour
+        run: |
+          python3 infrastructure/keycloak/generer-realm.py --cloud
+          python3 infrastructure/keycloak/generer-realm.py
+          git diff --exit-code -- infrastructure/aws/keycloak/finflow-realm-cloud.json infrastructure/keycloak/finflow-realm.json
+      - name: Analyse de la configuration (défauts moyens et plus bloquants)
+        run: |
+          docker run --rm -v "$PWD/infrastructure/aws:/work:ro" aquasec/trivy:0.76.1 config             --severity MEDIUM,HIGH,CRITICAL --exit-code 1 --no-progress /work
+
   pile:
     name: Pile locale et parcours Playwright (Keycloak, Kafka, services, front)
     needs: [backend, frontend]

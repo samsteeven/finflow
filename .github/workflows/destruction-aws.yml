@@ -1,0 +1,44 @@
+name: Destruction AWS
+
+# Détruit l'environnement de démonstration (tout ce que Terraform a créé : plus aucune facturation, hors images ECR et
+# état Terraform, qui coûtent des centimes). Manuel, approuvé dans l'environnement GitHub « aws-demo ».
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-demo
+  cancel-in-progress: false
+
+jobs:
+  destruction:
+    runs-on: ubuntu-24.04
+    environment: aws-demo
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: infrastructure/aws/terraform
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-3' }}
+      TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+      # Sans effet sur la destruction : la variable est obligatoire, sa valeur n'est pas utilisée.
+      TF_VAR_image_tag: destruction
+      TF_IN_AUTOMATION: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+      - name: Terraform init
+        run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="region=$AWS_REGION"
+      - name: Destruction
+        run: terraform destroy -input=false -auto-approve
